@@ -1158,7 +1158,7 @@ static struct msg_package PACKAGE_S6E3FC5_SDC[] = {
 	{ADDRESS(MSG_S6E3FC5_SDC_DISP_MODE_60PHS)},
 };
 
-#define CASE	0
+#define CASE	4
 
 #if CASE == 0
 static unsigned int disp_mode_table[] = {
@@ -1182,6 +1182,11 @@ static unsigned int disp_mode_table[] = {
 	GET_ENUM_WITH_NAME(MSG_S6E3FC5_SDC_DISP_MODE_60HS),
 	GET_ENUM_WITH_NAME(MSG_S6E3FC5_SDC_DISP_MODE_60PHS),
 	GET_ENUM_WITH_NAME(MSG_S6E3FC5_SDC_DISP_MODE_120HS),
+};
+#elif CASE == 4
+static unsigned int disp_mode_table[] = {
+        GET_ENUM_WITH_NAME(MSG_S6E3FC5_SDC_DISP_MODE_60PHS),
+        GET_ENUM_WITH_NAME(MSG_S6E3FC5_SDC_DISP_MODE_120HS),
 };
 #endif
 
