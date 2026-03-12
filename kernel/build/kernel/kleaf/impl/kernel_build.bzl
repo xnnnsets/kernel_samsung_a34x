@@ -463,7 +463,7 @@ def kernel_build(
     kmi_symbol_list_target_name = name + "_kmi_symbol_list"
     abi_symbollist_target_name = name + "_kmi_symbol_list_abi_symbollist"
     raw_kmi_symbol_list_target_name = name + "_raw_kmi_symbol_list"
-    clang_autofdo_profile = "//kernel_device_modules-6.6:profile/kernel.afdo"
+    clang_autofdo_profile = "//kernel-6.6:android/gki/aarch64/afdo/kernel.afdo"
 
     # Currently only support one sanitizer
     if sanitizers and len(sanitizers) > 1:
