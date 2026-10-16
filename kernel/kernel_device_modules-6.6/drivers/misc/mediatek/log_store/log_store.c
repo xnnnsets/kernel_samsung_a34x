@@ -506,9 +506,6 @@ static void write_to_logstore(char *str, size_t str_len)
 	new_str_len = scnprintf(textbuff, sizeof(textbuff), "%10llu.%06llu :%5d-%-16s: %s\n",
 				time_ms_high, time_ms_low, current->pid, current->comm, str);
 
-	if (expdb_logstore->log_offset >= BOOT_BUFF_SIZE)
-		expdb_logstore->log_offset = 0;
-
 	reserver_memory = BOOT_BUFF_SIZE - expdb_logstore->log_offset;
 	if(new_str_len > reserver_memory) {
 		memcpy_toio(expdb_logstore->bootbuff + expdb_logstore->log_offset, textbuff, reserver_memory);
@@ -635,7 +632,7 @@ u32 set_pmic_boot_phase(u32 boot_phase)
 
 	if (!map) {
 		if (get_pmic_interface() == false)
-			return PMIC_ERROR;
+			return -1;
 	}
 	boot_phase = boot_phase & BOOT_PHASE_MASK;
 	ret = regmap_read(map, pmic_addr, &reg_val);
@@ -656,7 +653,7 @@ u32 get_pmic_boot_phase(void)
 
 	if (!map) {
 		if (get_pmic_interface() == false)
-			return PMIC_ERROR;
+			return -1;
 	}
 
 	ret = regmap_read(map, pmic_addr, &reg_val);
@@ -667,7 +664,7 @@ u32 get_pmic_boot_phase(void)
 		return reg_val;
 	}
 
-	return PMIC_ERROR;
+	return -1;
 }
 EXPORT_SYMBOL_GPL(get_pmic_boot_phase);
 
