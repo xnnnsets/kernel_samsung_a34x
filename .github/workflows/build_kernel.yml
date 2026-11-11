@@ -43,6 +43,7 @@ jobs:
       PATCH_ADIOS: ${{ github.event.inputs.patch_adios == 'true' }}
       PATCH_BORE: ${{ github.event.inputs.patch_bore == 'true' }}
       COMMON_KERNEL_FOLDER: kernel-6.6
+      BOUTEILLE_KERNEL_PATCHES_FOLDER: kernel_patches
     steps:
       # 1. Checkout repository with submodules (shallow clone)
       - name: Checkout repository
@@ -84,11 +85,18 @@ jobs:
           patch -p1 < adios_ioscheduler_6.6.patch
           cd ..
 
+      # NoMount needs the full kernel_patches repo on disk (not just the one
+      # script), because apply_nomount_stack.sh reads its per-family patch
+      # files (ghost, hook, pathhide, ...) from BOUTEILLE_KERNEL_PATCHES_FOLDER.
+      - name: Clone kernel_patches repository
+        if: ${{ env.KSU_VARIANT == 'KSU-NEXT' }}
+        run: |
+          git clone --depth=1 https://github.com/Bouteillepleine/kernel_patches "$BOUTEILLE_KERNEL_PATCHES_FOLDER"
+
       - name: Apply NoMount (hookless) Patch
         if: ${{ env.KSU_VARIANT == 'KSU-NEXT' }}
         run: |
           curl -LSs "https://raw.githubusercontent.com/Bouteillepleine/kernel_patches/refs/heads/main/scripts/apply_nomount_stack.sh" | bash -s hookless
-
 
       - name: Record NoMount Version
         if: ${{ env.KSU_VARIANT == 'KSU-NEXT' }}
