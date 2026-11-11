@@ -44,6 +44,7 @@ jobs:
       PATCH_BORE: ${{ github.event.inputs.patch_bore == 'true' }}
       COMMON_KERNEL_FOLDER: kernel-6.6
       BOUTEILLE_KERNEL_PATCHES_FOLDER: kernel_patches
+      KSU_FOLDER: kernel-6.6/KernelSU-Next
     steps:
       # 1. Checkout repository with submodules (shallow clone)
       - name: Checkout repository
