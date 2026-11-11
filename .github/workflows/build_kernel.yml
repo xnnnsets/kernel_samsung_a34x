@@ -10,10 +10,38 @@ on:
           type: boolean
           required: true
           default: false
+      ksu_variant:
+          description: 'Root solution'
+          type: choice
+          required: true
+          default: 'KSU-NEXT'
+          options:
+            - KSU-NEXT
+            - non-root
+      ksu_commit:
+          description: '✏️ Custom KernelSU-Next commit/branch/tag (kosongkan = default)'
+          type: string
+          required: false
+          default: ''
+      patch_adios:
+          description: 'Apply ADIOS I/O scheduler patch'
+          type: boolean
+          required: true
+          default: false
+      patch_bore:
+          description: 'Apply BORE scheduler patch'
+          type: boolean
+          required: true
+          default: false
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      KSU_VARIANT: ${{ github.event.inputs.ksu_variant || 'KSU-NEXT' }}
+      KSU_COMMIT: ${{ github.event.inputs.ksu_commit }}
+      PATCH_ADIOS: ${{ github.event.inputs.patch_adios == 'true' }}
+      PATCH_BORE: ${{ github.event.inputs.patch_bore == 'true' }}
     steps:
       # 1. Checkout repository with submodules (shallow clone)
       - name: Checkout repository
@@ -29,8 +57,73 @@ jobs:
           sudo apt-get clean
           sudo rm -rf /usr/local
 
+      # 2. Setup KernelSU-Next (skip if non-root)
+      - name: Setup KernelSU-Next
+        if: ${{ env.KSU_VARIANT == 'KSU-NEXT' }}
+        run: |
+          cd kernel-6.6
+          if [ -n "$KSU_COMMIT" ]; then
+            echo "Using custom KernelSU-Next ref: $KSU_COMMIT"
+            curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -s "$KSU_COMMIT"
+          else
+            curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -s
+          fi
+          cd ..
 
-      # 2. Run your custom bash script
+      - name: Skip root solution (non-root build)
+        if: ${{ env.KSU_VARIANT != 'KSU-NEXT' }}
+        run: echo "ksu_variant=non-root, skipping KernelSU-Next setup."
+
+      # 3. Patch addon
+      - name: Apply ADIOS I/O scheduler patch
+        if: ${{ env.PATCH_ADIOS == 'true' }}
+        run: |
+          cd kernel-6.6
+          curl -LSs -o adios_ioscheduler_6.6.patch "https://raw.githubusercontent.com/Bouteillepleine/kernel_patches/main/experimental/adios_ioscheduler_6.6.patch"
+          patch -p1 < adios_ioscheduler_6.6.patch
+          cd ..
+
+      - name: Apply NoMount (hookless) Patch
+        if: ${{ env.KSU_VARIANT == 'KSU-NEXT' }}
+        run: |
+          cd kernel-6.6
+          curl -LSs "https://raw.githubusercontent.com/Bouteillepleine/kernel_patches/refs/heads/main/scripts/apply_nomount_stack.sh" | bash -s hookless
+          cd ..
+
+
+      - name: Record NoMount Version
+        if: ${{ env.KSU_VARIANT == 'KSU-NEXT' }}
+        run: |
+          cd kernel-6.6
+          curl -LSs "https://raw.githubusercontent.com/Bouteillepleine/kernel_patches/refs/heads/main/scripts/apply_nomount_stack.sh" | bash -s record-version
+          curl -LSs "https://raw.githubusercontent.com/Bouteillepleine/kernel_patches/refs/heads/main/scripts/apply_nomount_stack.sh" | bash -s hook
+          curl -LSs "https://raw.githubusercontent.com/Bouteillepleine/kernel_patches/refs/heads/main/scripts/apply_nomount_stack.sh" | bash -s ghost
+          curl -LSs "https://raw.githubusercontent.com/Bouteillepleine/kernel_patches/refs/heads/main/scripts/apply_nomount_stack.sh" | bash -s pathhide
+          cd ..
+
+      # Every family is applied at fuzz 0, but `patch` still exits 0 when a hunk
+      # lands at an offset -- and an offset can put a guard inside the wrong
+      # function. That is not hypothetical: ghost_notdir.patch sat in
+      # path_parentat() instead of path_lookupat() for four kernel versions with
+      # every build green. do_verify() asserts per family that each guard is
+      # inside the function it names, so a mislanded hunk fails the build here
+      # rather than shipping a cloak with a hole in it.
+      - name: Verify NoMount stack
+        if: ${{ env.KSU_VARIANT == 'KSU-NEXT' }}
+        run: |
+          cd kernel-6.6
+          curl -LSs "https://raw.githubusercontent.com/Bouteillepleine/kernel_patches/refs/heads/main/scripts/apply_nomount_stack.sh"| bash -s verify
+          cd ..
+
+      - name: Apply BORE scheduler patch
+        if: ${{ env.PATCH_BORE == 'true' }}
+        run: |
+          cd kernel-6.6
+          curl -LSs -o bore_6.6.patch "https://raw.githubusercontent.com/Bouteillepleine/kernel_patches/main/experimental/bore_6.6.patch"
+          patch -p1 < bore_6.6.patch
+          cd ..
+
+      # 4. Run your custom bash script
       - name: Run build script
         run: |
           chmod +x ./build_kernel.sh
@@ -68,6 +161,9 @@ jobs:
           echo "osrc_release=$OSRC_RELEASE" >> build_info.txt
           echo "asb_level=$ASB_LEVEL" >> build_info.txt
           echo "kernel_release=$KERNEL_VERSION" >> build_info.txt
+          echo "root_solution=$KSU_VARIANT" >> build_info.txt
+          echo "patch_adios=$PATCH_ADIOS" >> build_info.txt
+          echo "patch_bore=$PATCH_BORE" >> build_info.txt
           echo "$(grep 'BRANCH=' kernel-6.6/build.config.common)" >> build_info.txt
           echo "$(grep 'KMI_GENERATION=' kernel-6.6/build.config.common)" >> build_info.txt
 
@@ -106,13 +202,13 @@ jobs:
         with:
           name: flashable-tar
           path: "${{ env.tar_file_name }}.tar.md5"
-          
+
       - name: Upload Image artifact
         uses: actions/upload-artifact@v7
         with:
           name: boot-image
           path: boot.img
-      
+
 
       - name: Upload release assets
         if: github.event.inputs.release
@@ -131,4 +227,3 @@ jobs:
             build_info.txt
             boot.img
             ${{ env.tar_file_name }}.tar.md5
-
