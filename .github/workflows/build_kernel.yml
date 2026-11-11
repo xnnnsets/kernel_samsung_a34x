@@ -42,6 +42,7 @@ jobs:
       KSU_COMMIT: ${{ github.event.inputs.ksu_commit }}
       PATCH_ADIOS: ${{ github.event.inputs.patch_adios == 'true' }}
       PATCH_BORE: ${{ github.event.inputs.patch_bore == 'true' }}
+      COMMON_KERNEL_FOLDER: kernel-6.6
     steps:
       # 1. Checkout repository with submodules (shallow clone)
       - name: Checkout repository
@@ -86,20 +87,16 @@ jobs:
       - name: Apply NoMount (hookless) Patch
         if: ${{ env.KSU_VARIANT == 'KSU-NEXT' }}
         run: |
-          cd kernel-6.6
           curl -LSs "https://raw.githubusercontent.com/Bouteillepleine/kernel_patches/refs/heads/main/scripts/apply_nomount_stack.sh" | bash -s hookless
-          cd ..
 
 
       - name: Record NoMount Version
         if: ${{ env.KSU_VARIANT == 'KSU-NEXT' }}
         run: |
-          cd kernel-6.6
           curl -LSs "https://raw.githubusercontent.com/Bouteillepleine/kernel_patches/refs/heads/main/scripts/apply_nomount_stack.sh" | bash -s record-version
           curl -LSs "https://raw.githubusercontent.com/Bouteillepleine/kernel_patches/refs/heads/main/scripts/apply_nomount_stack.sh" | bash -s hook
           curl -LSs "https://raw.githubusercontent.com/Bouteillepleine/kernel_patches/refs/heads/main/scripts/apply_nomount_stack.sh" | bash -s ghost
           curl -LSs "https://raw.githubusercontent.com/Bouteillepleine/kernel_patches/refs/heads/main/scripts/apply_nomount_stack.sh" | bash -s pathhide
-          cd ..
 
       # Every family is applied at fuzz 0, but `patch` still exits 0 when a hunk
       # lands at an offset -- and an offset can put a guard inside the wrong
@@ -111,9 +108,7 @@ jobs:
       - name: Verify NoMount stack
         if: ${{ env.KSU_VARIANT == 'KSU-NEXT' }}
         run: |
-          cd kernel-6.6
           curl -LSs "https://raw.githubusercontent.com/Bouteillepleine/kernel_patches/refs/heads/main/scripts/apply_nomount_stack.sh"| bash -s verify
-          cd ..
 
       - name: Apply BORE scheduler patch
         if: ${{ env.PATCH_BORE == 'true' }}
