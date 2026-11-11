@@ -100,6 +100,7 @@ jobs:
           curl -LSs "https://raw.githubusercontent.com/Bouteillepleine/kernel_patches/refs/heads/main/scripts/apply_nomount_stack.sh" | bash -s hookless
 
       - name: Record NoMount Version
+        continue-on-error: true
         if: ${{ env.KSU_VARIANT == 'KSU-NEXT' }}
         run: |
           curl -LSs "https://raw.githubusercontent.com/Bouteillepleine/kernel_patches/refs/heads/main/scripts/apply_nomount_stack.sh" | bash -s record-version
