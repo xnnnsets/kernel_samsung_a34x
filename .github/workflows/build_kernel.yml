@@ -45,8 +45,6 @@ jobs:
     env:
       KSU_VARIANT: ${{ github.event.inputs.ksu_variant || 'KSU-NEXT' }}
       KSU_COMMIT: ${{ github.event.inputs.ksu_commit }}
-      PATCH_ADIOS: ${{ github.event.inputs.patch_adios == 'true' }}
-      PATCH_BORE: ${{ github.event.inputs.patch_bore == 'true' }}
       # Automatic push / pull_request builds always skip SUSFS.
       # Manual workflow_dispatch builds use the selected SUSFS mode.
       SUSFS_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.susfs_ref || 'disabled' }}
