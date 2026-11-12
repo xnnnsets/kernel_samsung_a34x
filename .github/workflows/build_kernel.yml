@@ -34,10 +34,19 @@ on:
           required: true
           default: false
       susfs_ref:
-          description: 'simonpunk/susfs4ksu ref to patch SUSFS from. auto = gki-android15-6.6 branch, a branch/tag/40-char commit pins it, kosongkan = build without SUSFS'
+          description: 'SUSFS source: auto, custom ref, or disabled'
+          type: choice
+          required: true
+          default: 'auto'
+          options:
+            - auto
+            - custom
+            - disabled
+      susfs_custom_ref:
+          description: 'Custom SUSFS branch/tag/40-character commit (only used when susfs_ref = custom)'
           type: string
           required: false
-          default: 'auto'
+          default: ''
 
 jobs:
   build:
@@ -47,7 +56,10 @@ jobs:
       KSU_COMMIT: ${{ github.event.inputs.ksu_commit }}
       PATCH_ADIOS: ${{ github.event.inputs.patch_adios == 'true' }}
       PATCH_BORE: ${{ github.event.inputs.patch_bore == 'true' }}
-      SUSFS_REF: ${{ github.event.inputs.susfs_ref || 'auto' }}
+      # Automatic push / pull_request builds always skip SUSFS.
+      # Manual workflow_dispatch builds use the selected SUSFS mode.
+      SUSFS_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.susfs_ref || 'disabled' }}
+      SUSFS_CUSTOM_REF: ${{ inputs.susfs_custom_ref }}
       COMMON_KERNEL_FOLDER: kernel-6.6
       BOUTEILLE_KERNEL_PATCHES_FOLDER: kernel_patches
       KSU_FOLDER: kernel-6.6/KernelSU-Next
@@ -86,19 +98,10 @@ jobs:
             echo "Using custom KernelSU-Next ref: $KSU_COMMIT"
             curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -s "$KSU_COMMIT"
           else
-            curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -s
+            curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -s dev
           fi
           cd ..
 
-      # KernelSU-Next 8b9d7a7a resolves the SELinux helpers through kallsyms and
-      # calls the raw address. Under legacy Clang CFI (< 6.1) that traps in
-      # cfi_check_fail during init -- a silent bootloop. No-op on a
-      # KernelSU-Next without the defect, and a no-op at runtime wherever
-      # CONFIG_CFI_CLANG is off.
-      - name: Fix KSU SELinux symbol calls under CFI
-        if: ${{ env.KSU_VARIANT == 'KSU-NEXT' }}
-        run: |
-          bash "$BOUTEILLE_KERNEL_PATCHES_FOLDER/scripts/fix_ksu_cfi_symbol_calls.sh"
 
       - name: Extract KSU Version Info and inject into Kbuild
         shell: bash
@@ -114,13 +117,49 @@ jobs:
           KSU_COMMIT=$(git rev-parse --short refs/remotes/origin/dev 2>/dev/null)
           KSU_VERSION=$((30000 + KSU_GIT_VERSION))
 
+          echo "::group::KSU version info"
+          echo "KSU_GIT_VERSION=$KSU_GIT_VERSION"
+          echo "KSU_GIT_TAG=$KSU_GIT_TAG"
+          echo "KSU_COMMIT=$KSU_COMMIT"
+          echo "KSU_VERSION=$KSU_VERSION"
+          echo "::endgroup::"
+
           cd kernel
+
+          echo "::group::Kbuild BEFORE patch"
+          grep -nE 'KSU_VERSION_FALLBACK|KSU_VERSION_TAG_FALLBACK' Kbuild || echo "::warning::tidak ada baris FALLBACK di Kbuild sama sekali"
+          echo "::endgroup::"
+
           sed -i "s/^KSU_VERSION_FALLBACK := 1$/KSU_VERSION_FALLBACK := ${KSU_VERSION}/" Kbuild
           sed -i "s/^KSU_VERSION_TAG_FALLBACK := v0.0.1$/KSU_VERSION_TAG_FALLBACK := ${KSU_GIT_TAG}/" Kbuild
+
+          echo "::group::Kbuild AFTER patch"
+          grep -nE 'KSU_VERSION_FALLBACK|KSU_VERSION_TAG_FALLBACK' Kbuild
+          echo "::endgroup::"
+
+          # Pastikan sed benar-benar mengubah nilainya, bukan diam-diam no-op
+          if grep -q "^KSU_VERSION_FALLBACK := 1$" Kbuild; then
+            echo "::error::sed gagal mengganti KSU_VERSION_FALLBACK — pattern tidak match (cek format baris Kbuild di atas)"
+            exit 1
+          fi
+          if grep -q "^KSU_VERSION_TAG_FALLBACK := v0.0.1$" Kbuild; then
+            echo "::error::sed gagal mengganti KSU_VERSION_TAG_FALLBACK — pattern tidak match (cek format baris Kbuild di atas)"
+            exit 1
+          fi
 
           echo "KSU_GIT_TAG=$KSU_GIT_TAG" >> $GITHUB_ENV
           echo "KSU_VERSION=$KSU_VERSION" >> $GITHUB_ENV
           echo "KSU_COMMIT=$KSU_COMMIT" >> $GITHUB_ENV
+
+      # KernelSU-Next 8b9d7a7a resolves the SELinux helpers through kallsyms and
+      # calls the raw address. Under legacy Clang CFI (< 6.1) that traps in
+      # cfi_check_fail during init -- a silent bootloop. No-op on a
+      # KernelSU-Next without the defect, and a no-op at runtime wherever
+      # CONFIG_CFI_CLANG is off.
+      - name: Fix KSU SELinux symbol calls under CFI
+        if: ${{ env.KSU_VARIANT == 'KSU-NEXT' }}
+        run: |
+          bash "$BOUTEILLE_KERNEL_PATCHES_FOLDER/scripts/fix_ksu_cfi_symbol_calls.sh"
 
       - name: Skip root solution (non-root build)
         if: ${{ env.KSU_VARIANT != 'KSU-NEXT' }}
@@ -227,10 +266,29 @@ jobs:
       # named fix patch or fails the build -- a half-applied hiding stack
       # boots and lies about what it hides, which is worse than a red run.
       - name: Apply SUSFS
-        if: ${{ env.KSU_VARIANT == 'KSU-NEXT' && env.SUSFS_REF != '' }}
+        if: ${{ env.KSU_VARIANT == 'KSU-NEXT' && env.SUSFS_MODE != 'disabled' }}
         run: |
           set -euo pipefail
           echo "::group::Apply SUSFS"
+
+          # Resolve the selected source. Push and pull_request builds never
+          # enter this step because SUSFS_MODE is forced to "disabled".
+          case "$SUSFS_MODE" in
+            auto)
+              SUSFS_REF="auto"
+              ;;
+            custom)
+              if [ -z "$SUSFS_CUSTOM_REF" ]; then
+                echo "::error::susfs_custom_ref is required when susfs_ref is custom."
+                exit 1
+              fi
+              SUSFS_REF="$SUSFS_CUSTOM_REF"
+              ;;
+            *)
+              echo "::error::Unsupported SUSFS mode: $SUSFS_MODE"
+              exit 1
+              ;;
+          esac
 
           SUSFS_URL="https://gitlab.com/simonpunk/susfs4ksu.git"
           SUSFS_BRANCH="gki-android15-6.6"
