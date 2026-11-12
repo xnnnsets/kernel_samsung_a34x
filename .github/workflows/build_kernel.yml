@@ -17,9 +17,10 @@ on:
           default: 'KSU-NEXT'
           options:
             - KSU-NEXT
+            - KSU-TIAN
             - non-root
       ksu_commit:
-          description: '✏️ Custom KernelSU-Next commit/branch/tag (kosongkan = default)'
+          description: '✏️ Custom KernelSU-Next or KernelSU-Tian commit/branch/tag (Blank = default)'
           type: string
           required: false
           default: ''
@@ -63,6 +64,7 @@ jobs:
       COMMON_KERNEL_FOLDER: kernel-6.6
       BOUTEILLE_KERNEL_PATCHES_FOLDER: kernel_patches
       KSU_FOLDER: kernel-6.6/KernelSU-Next
+      KSU_TIAN_FOLDER: kernel-6.6/KernelSU
     steps:
       # 1. Checkout repository with submodules (shallow clone)
       - name: Checkout repository
@@ -85,7 +87,6 @@ jobs:
       # here, before KernelSU-Next setup, so the CFI fix step right after it
       # can already reach it.
       - name: Clone kernel_patches repository
-        if: ${{ env.KSU_VARIANT == 'KSU-NEXT' }}
         run: |
           git clone --depth=1 https://github.com/Bouteillepleine/kernel_patches "$BOUTEILLE_KERNEL_PATCHES_FOLDER"
 
@@ -93,7 +94,7 @@ jobs:
       - name: Setup KernelSU-Next
         if: ${{ env.KSU_VARIANT == 'KSU-NEXT' }}
         run: |
-          cd kernel-6.6
+          cd $COMMON_KERNEL_FOLDER
           if [ -n "$KSU_COMMIT" ]; then
             echo "Using custom KernelSU-Next ref: $KSU_COMMIT"
             curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -s "$KSU_COMMIT"
@@ -102,11 +103,23 @@ jobs:
           fi
           cd ..
 
+      - name: Setup KernelSU-Tian
+        if: ${{ env.KSU_VARIANT == 'KSU-TIAN' }}
+        run: |
+          cd $COMMON_KERNEL_FOLDER
+          if [ -n "$KSU_COMMIT" ]; then
+            echo "Using custom KernelSU-Tian ref: $KSU_COMMIT"
+            curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -s "$KSU_COMMIT"
+          else
+            curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -s main
+          fi
+          cd ..
 
       - name: Extract KSU Version Info and inject into Kbuild
+        if: ${{ env.KSU_VARIANT == 'KSU-NEXT' }}
         shell: bash
         run: |
-          cd "kernel-6.6/KernelSU-Next"
+          cd $KSU_FOLDER
 
           # Fetch dev branch for version info (tags, commits, etc.)
           git fetch origin dev 2>/dev/null || true
@@ -162,20 +175,20 @@ jobs:
           bash "$BOUTEILLE_KERNEL_PATCHES_FOLDER/scripts/fix_ksu_cfi_symbol_calls.sh"
 
       - name: Skip root solution (non-root build)
-        if: ${{ env.KSU_VARIANT != 'KSU-NEXT' }}
+        if: ${{ env.KSU_VARIANT == 'non-root' }}
         run: echo "ksu_variant=non-root, skipping KernelSU-Next setup."
 
       # 3. Patch addon
       - name: Apply ADIOS I/O scheduler patch
         if: ${{ env.PATCH_ADIOS == 'true' }}
         run: |
-          cd kernel-6.6
+          cd $COMMON_KERNEL_FOLDER
           curl -LSs -o adios_ioscheduler_6.6.patch "https://raw.githubusercontent.com/Bouteillepleine/kernel_patches/main/experimental/adios_ioscheduler_6.6.patch"
           patch -p1 < adios_ioscheduler_6.6.patch
           cd ..
 
       - name: Apply NoMount (hookless) Patch
-        if: ${{ env.KSU_VARIANT == 'KSU-NEXT' }}
+        if: ${{ env.KSU_VARIANT == 'KSU-NEXT' || env.KSU_VARIANT == 'KSU-TIAN' }}
         env:
           # apply_nomount_stack.sh's "hookless" subcommand needs to know which
           # ref of NoMount-Suite to pull the Prism engine source + patches from.
@@ -184,7 +197,7 @@ jobs:
           bash "$BOUTEILLE_KERNEL_PATCHES_FOLDER/scripts/apply_nomount_stack.sh" hookless
 
       - name: Record NoMount Version
-        if: ${{ env.KSU_VARIANT == 'KSU-NEXT' }}
+        if: ${{ env.KSU_VARIANT == 'KSU-NEXT' || env.KSU_VARIANT == 'KSU-TIAN' }}
         run: |
           bash "$BOUTEILLE_KERNEL_PATCHES_FOLDER/scripts/apply_nomount_stack.sh" record-version
           bash "$BOUTEILLE_KERNEL_PATCHES_FOLDER/scripts/apply_nomount_stack.sh" hook
@@ -193,9 +206,9 @@ jobs:
 
 
       - name: Apply pathhide (manual, matches a34x tree)
-        if: ${{ env.KSU_VARIANT == 'KSU-NEXT' }}
+        if: ${{ env.KSU_VARIANT == 'KSU-NEXT' || env.KSU_VARIANT == 'KSU-TIAN' }}
         run: |
-          cd kernel-6.6
+          cd $COMMON_KERNEL_FOLDER
 
           echo "== 1. Copy pathhide.c & pathhide.h =="
           cp "../$BOUTEILLE_KERNEL_PATCHES_FOLDER/common/_pathhide/pathhide.c" fs/pathhide.c
@@ -252,7 +265,7 @@ jobs:
       # inside the function it names, so a mislanded hunk fails the build here
       # rather than shipping a cloak with a hole in it.
       - name: Verify NoMount stack
-        if: ${{ env.KSU_VARIANT == 'KSU-NEXT' }}
+        if: ${{ env.KSU_VARIANT == 'KSU-NEXT' || env.KSU_VARIANT == 'KSU-TIAN' }}
         run: |
           bash "$BOUTEILLE_KERNEL_PATCHES_FOLDER/scripts/apply_nomount_stack.sh" verify
 
@@ -265,7 +278,109 @@ jobs:
       # tree), then the kernel side. Every reject is either repaired by a
       # named fix patch or fails the build -- a half-applied hiding stack
       # boots and lies about what it hides, which is worse than a red run.
-      - name: Apply SUSFS
+
+      - name: Apply SUSFS KSU-TIAN
+        if: ${{ env.KSU_VARIANT == 'KSU-TIAN' && env.SUSFS_MODE != 'disabled' }}
+        run: |
+          set -euo pipefail
+          echo "::group::Apply SUSFS"
+
+          # Resolve the selected source. Push and pull_request builds never
+          # enter this step because SUSFS_MODE is forced to "disabled".
+          case "$SUSFS_MODE" in
+            auto)
+              SUSFS_REF="auto"
+              ;;
+            custom)
+              if [ -z "$SUSFS_CUSTOM_REF" ]; then
+                echo "::error::susfs_custom_ref is required when susfs_ref is custom."
+                exit 1
+              fi
+              SUSFS_REF="$SUSFS_CUSTOM_REF"
+              ;;
+            *)
+              echo "::error::Unsupported SUSFS mode: $SUSFS_MODE"
+              exit 1
+              ;;
+          esac
+
+          SUSFS_URL="https://gitlab.com/simonpunk/susfs4ksu.git"
+          SUSFS_BRANCH="gki-android15-6.6"
+          SUSFS_DIR="$GITHUB_WORKSPACE/susfs4ksu"
+          rm -rf "$SUSFS_DIR"
+          if [ "$SUSFS_REF" = "auto" ]; then
+            git clone --depth=1 --branch "$SUSFS_BRANCH" "$SUSFS_URL" "$SUSFS_DIR"
+          elif [[ "$SUSFS_REF" =~ ^[0-9a-f]{40}$ ]]; then
+            git init -q "$SUSFS_DIR"
+            git -C "$SUSFS_DIR" remote add origin "$SUSFS_URL"
+            git -C "$SUSFS_DIR" fetch --depth 1 origin "$SUSFS_REF"
+            git -C "$SUSFS_DIR" checkout -q FETCH_HEAD
+          else
+            git clone --depth=1 --branch "$SUSFS_REF" "$SUSFS_URL" "$SUSFS_DIR"
+          fi
+          if [ ! -f "$SUSFS_DIR/kernel_patches/50_add_susfs_in_${SUSFS_BRANCH}.patch" ]; then
+            echo "::error::susfs4ksu@$SUSFS_REF carries no kernel_patches/50_add_susfs_in_${SUSFS_BRANCH}.patch; pass a ref from the $SUSFS_BRANCH branch or leave susfs_ref on auto"
+            exit 1
+          fi
+          echo "susfs4ksu: $SUSFS_REF = $(git -C "$SUSFS_DIR" log --oneline -1)"
+
+          SUSFS_KP="$SUSFS_DIR/kernel_patches"
+
+          cp "$SUSFS_KP/fs/"*.c "$COMMON_KERNEL_FOLDER/fs/"
+          cp "$SUSFS_KP/include/linux/"*.h "$COMMON_KERNEL_FOLDER/include/linux/"
+
+          SUSVER="$(grep '#define SUSFS_VERSION' "$COMMON_KERNEL_FOLDER/include/linux/susfs.h" | awk -F'"' '{print $2}')"
+          if [ -z "$SUSVER" ]; then
+            echo "::error::Could not read SUSFS_VERSION from include/linux/susfs.h"
+            exit 1
+          fi
+          echo "SUSVER=$SUSVER" >> "$GITHUB_ENV"
+          echo "SusFS version: $SUSVER"
+
+          # ---- KernelSU side -------------------------------------------
+          cd "$KSU_TIAN_FOLDER"
+          patch -p1 --forward < "$SUSFS_KP/KernelSU/10_enable_susfs_for_ksu.patch" || true
+
+          # What we set each SUSFS option to, checked against what the tree
+          # actually defines rather than trusted.
+          declare -A SUSFS_POLICY=(
+            [KSU_SUSFS]=y
+            [KSU_SUSFS_SUS_PATH]=y
+            [KSU_SUSFS_SUS_MOUNT]=y
+            [KSU_SUSFS_SUS_KSTAT]=y
+            [KSU_SUSFS_SUS_MAP]=y
+            [KSU_SUSFS_OPEN_REDIRECT]=y
+            [KSU_SUSFS_SPOOF_UNAME]=y
+            [KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG]=y
+            [KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS]=y
+            [KSU_SUSFS_ENABLE_LOG]=y
+            [KSU_SUSFS_PRIORITY_UID_FILTER]=n
+          )
+          cd "$GITHUB_WORKSPACE"
+          defined="$(grep -oE '^config KSU_SUSFS[A-Z_]*' "$KSU_TIAN_FOLDER/kernel/Kconfig" | awk '{print $2}' | sort -u)"
+          listed="$(printf '%s\n' "${!SUSFS_POLICY[@]}" | sort)"
+          undecided="$(comm -13 <(echo "$listed") <(echo "$defined"))"
+          vanished="$(comm -23 <(echo "$listed") <(echo "$defined"))"
+          if [ -n "$undecided" ]; then
+            echo "::error::SUSFS $SUSVER defines options this builder has no setting for:"
+            echo "$undecided" | sed 's/^/     /'
+            exit 1
+          fi
+          if [ -n "$vanished" ]; then
+            echo "::error::This builder sets SUSFS options that $SUSVER no longer defines:"
+            echo "$vanished" | sed 's/^/     /'
+            exit 1
+          fi
+
+          echo "Add SUSFS Configuration Settings"
+          for sym in $listed; do
+            echo "CONFIG_${sym}=${SUSFS_POLICY[$sym]}"
+          done | tee -a "$COMMON_KERNEL_FOLDER/arch/arm64/configs/gki_defconfig" | sed 's/^/  /'
+
+          echo "✅ SUSFS $SUSVER applied"
+          echo "::endgroup::"
+
+      - name: Apply SUSFS KSU NEXT
         if: ${{ env.KSU_VARIANT == 'KSU-NEXT' && env.SUSFS_MODE != 'disabled' }}
         run: |
           set -euo pipefail
@@ -452,7 +567,7 @@ jobs:
       - name: Apply BORE scheduler patch
         if: ${{ env.PATCH_BORE == 'true' }}
         run: |
-          cd kernel-6.6
+          cd $COMMON_KERNEL_FOLDER
           curl -LSs -o bore_6.6.patch "https://raw.githubusercontent.com/Bouteillepleine/kernel_patches/main/experimental/bore_6.6.patch"
           patch -p1 < bore_6.6.patch
           cd ..
@@ -475,20 +590,20 @@ jobs:
 
       - name: Extract the .config file from a kernel image
         run: |
-          bash kernel-6.6/scripts/extract-ikconfig Image >> kernel_config
+          bash $COMMON_KERNEL_FOLDER/scripts/extract-ikconfig Image >> kernel_config
 
           export OSRC_RELEASE="$(cat build_kernel.sh | grep SEC_BUILDNUMBER | tail | sed 's/^export SEC_BUILDNUMBER\=\"//' | sed 's/\"$//' | sed 's/ogki//')"
           echo "Based on $OSRC_RELEASE Samsung Open Source Kernel source" >> versions.txt
           echo "osrc_release=$OSRC_RELEASE" >> $GITHUB_ENV
 
-          export VERSION="$(cat kernel-6.6/Makefile | grep 'VERSION = ' | head -n 1 | sed 's/VERSION = //')"
-          export PATCHLEVEL="$(cat kernel-6.6/Makefile | grep 'PATCHLEVEL = ' | head -n 1 | sed 's/PATCHLEVEL = //')"
-          export SUBLEVEL="$(cat kernel-6.6/Makefile | grep 'SUBLEVEL = ' | head -n 1 | sed 's/SUBLEVEL = //')"
+          export VERSION="$(cat $COMMON_KERNEL_FOLDER/Makefile | grep 'VERSION = ' | head -n 1 | sed 's/VERSION = //')"
+          export PATCHLEVEL="$(cat $COMMON_KERNEL_FOLDER/Makefile | grep 'PATCHLEVEL = ' | head -n 1 | sed 's/PATCHLEVEL = //')"
+          export SUBLEVEL="$(cat $COMMON_KERNEL_FOLDER/Makefile | grep 'SUBLEVEL = ' | head -n 1 | sed 's/SUBLEVEL = //')"
           export KERNEL_VERSION="$VERSION.$PATCHLEVEL.$SUBLEVEL"
           echo "Linux Kernel ARM64 $KERNEL_VERSION" >> versions.txt
           echo "kernel_release=$KERNEL_VERSION" >> $GITHUB_ENV
 
-          export ASB_LEVEL="$(cat kernel-6.6/build.config.common | grep ASB_SPL | tail | sed 's/^ASB_SPL\=//')"
+          export ASB_LEVEL="$(cat $COMMON_KERNEL_FOLDER/build.config.common | grep ASB_SPL | tail | sed 's/^ASB_SPL\=//')"
           echo "Merged $ASB_LEVEL android15-6.6 ASB Security Patch Level" >> versions.txt
           echo "asb_level=$ASB_LEVEL" >> $GITHUB_ENV
 
@@ -499,8 +614,8 @@ jobs:
           echo "patch_adios=$PATCH_ADIOS" >> build_info.txt
           echo "patch_bore=$PATCH_BORE" >> build_info.txt
           echo "susfs_version=${SUSVER:-none}" >> build_info.txt
-          echo "$(grep 'BRANCH=' kernel-6.6/build.config.common)" >> build_info.txt
-          echo "$(grep 'KMI_GENERATION=' kernel-6.6/build.config.common)" >> build_info.txt
+          echo "$(grep 'BRANCH=' $COMMON_KERNEL_FOLDER/build.config.common)" >> build_info.txt
+          echo "$(grep 'KMI_GENERATION=' $COMMON_KERNEL_FOLDER/build.config.common)" >> build_info.txt
 
       - name: Build boot image
         run: |
