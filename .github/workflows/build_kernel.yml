@@ -342,6 +342,12 @@ jobs:
           cd "$GITHUB_WORKSPACE/$COMMON_KERNEL_FOLDER"
           patch -p1 --forward < "$SUSFS_KP/50_add_susfs_in_gki-android15-6.6.patch" || true
 
+          # ---- Fetch Pershoot side ---------------------------------------------
+          cd $SUSFS_DIR
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "41898282+github-actions[bot]@://github.com"
+          git fetch https://gitlab.com/pershoot/susfs4ksu.git gki-android14-6.1-dev
+          git log ..FETCH_HEAD --oneline -n 2 | awk '{print $1}' | tac | xargs git cherry-pick
           # What we set each SUSFS option to, checked against what the tree
           # actually defines rather than trusted.
           declare -A SUSFS_POLICY=(
