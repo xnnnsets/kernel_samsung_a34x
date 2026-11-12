@@ -618,6 +618,16 @@ jobs:
           "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --disable CONFIG_ZRAM_DEF_COMP_LZORLE
           "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_ZRAM_DEF_COMP_LZ4
 
+    - name: Add Tmpfs Support and swith to lz4
+      shell: bash
+      run: |
+        set -euo pipefail
+        echo "Add Tmpfs Support"
+        cat >> "$COMMON_KERNEL_FOLDER/arch/arm64/configs/gki_defconfig" <<EOF
+        CONFIG_TMPFS_XATTR=y
+        CONFIG_TMPFS_POSIX_ACL=y
+        EOF
+
       # 4. Run your custom bash script
       - name: Run build script
         run: |
