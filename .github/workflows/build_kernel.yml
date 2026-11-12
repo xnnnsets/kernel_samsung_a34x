@@ -51,8 +51,8 @@ jobs:
       SUSFS_CUSTOM_REF: ${{ inputs.susfs_custom_ref }}
       COMMON_KERNEL_FOLDER: kernel-6.6
       BOUTEILLE_KERNEL_PATCHES_FOLDER: kernel_patches
-      KSU_FOLDER: kernel-6.6/KernelSU-Next
-      KSU_TIAN_FOLDER: kernel-6.6/KernelSU
+      KSU_FOLDER: ${{ github.event.inputs.ksu_variant == 'KSU-TIAN' && 'kernel-6.6/KernelSU' || 'kernel-6.6/KernelSU-Next' }}
+      GKI_DEFCONFIG: kernel-6.6/arch/arm64/configs/gki_defconfig
     steps:
       # 1. Checkout repository with submodules (shallow clone)
       - name: Checkout repository
@@ -250,7 +250,11 @@ jobs:
       - name: Verify NoMount stack
         if: ${{ env.KSU_VARIANT == 'KSU-NEXT' || env.KSU_VARIANT == 'KSU-TIAN' }}
         run: |
-          bash "$BOUTEILLE_KERNEL_PATCHES_FOLDER/scripts/apply_nomount_stack.sh" verify
+          if [[ "$KSU_VARIANT" == "KSU-NEXT" ]]; then
+            bash "$BOUTEILLE_KERNEL_PATCHES_FOLDER/scripts/apply_nomount_stack.sh" verify
+          elif [[ "$KSU_VARIANT" == "KSU-TIAN" ]]; then
+            bash "$BOUTEILLE_KERNEL_PATCHES_FOLDER/scripts/apply_nomount_stack.sh" verify || true
+          fi
 
       # SUSFS, applied on top of the NoMount stack already verified above.
       # Cloned here so the GKI branch key (gki-android15-6.6, this device's
@@ -321,7 +325,7 @@ jobs:
           echo "SusFS version: $SUSVER"
 
           # ---- KernelSU side -------------------------------------------
-          cd "$KSU_TIAN_FOLDER"
+          cd "KSU_FOLDER"
           patch -p1 --forward < "$SUSFS_KP/KernelSU/10_enable_susfs_for_ksu.patch" || true
 
           # What we set each SUSFS option to, checked against what the tree
@@ -340,7 +344,7 @@ jobs:
             [KSU_SUSFS_PRIORITY_UID_FILTER]=n
           )
           cd "$GITHUB_WORKSPACE"
-          defined="$(grep -oE '^config KSU_SUSFS[A-Z_]*' "$KSU_TIAN_FOLDER/kernel/Kconfig" | awk '{print $2}' | sort -u)"
+          defined="$(grep -oE '^config KSU_SUSFS[A-Z_]*' "$KSU_FOLDER/kernel/Kconfig" | awk '{print $2}' | sort -u)"
           listed="$(printf '%s\n' "${!SUSFS_POLICY[@]}" | sort)"
           undecided="$(comm -13 <(echo "$listed") <(echo "$defined"))"
           vanished="$(comm -23 <(echo "$listed") <(echo "$defined"))"
@@ -567,6 +571,55 @@ jobs:
           cd "$COMMON_KERNEL_FOLDER"
           patch -p1 < "../$BOUTEILLE_KERNEL_PATCHES_FOLDER/common/unicode_bypass_fix_6.1+.patch"
           cd ..
+
+      - name: apply patch droid space
+        shell: bash
+        run: |
+          cd "$COMMON_KERNEL_FOLDER"
+          # ABI: use ABI padding for SYSVIPC This commit allows us to enable CONFIG_SYSVIPC in defconfig without breaking kernel ABI
+          patch -p1 < "../$BOUTEILLE_KERNEL_PATCHES_FOLDER/common/droidspaces/fix_sysvipc_kabi_6_7_8.patch"
+          cd ..
+
+      - name: add configs
+        shell: bash
+        run: |
+          "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_SYSVIPC
+          "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_POSIX_MQUEUE
+          "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_IPC_NS
+          "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_PID_NS
+          "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_USER_NS
+          "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_DEVTMPFS
+          "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_NETFILTER_XT_MATCH_ADDRTYPE
+          "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_NETFILTER_XT_TARGET_REJECT
+          "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_NETFILTER_XT_TARGET_LOG
+          "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_NETFILTER_XT_MATCH_RECENT
+          "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_IP_SET
+          "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_IP_SET_HASH_IP
+          "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_IP_SET_HASH_NET
+          "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_NETFILTER_XT_SET
+
+      - name: apply bbrv3 patch
+        shell: bash
+        run: |
+          cd "$COMMON_KERNEL_FOLDER"
+          patch -p1 < "../$BOUTEILLE_KERNEL_PATCHES_FOLDER/common/bbrv3/0001-net-tcp-backport-BBRv3-to-android15-6.6.patch"
+          cd ..
+
+      - name: add bbr configs to defconfig
+        shell: bash
+        run: |
+          "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_NET_SCH_FQ
+          "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_NET_SCH_FQ_CODEL
+          "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_NET_SCH_CAKE
+          "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_NET_SCH_PIE
+          "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_NET_SCH_FQ_PIE
+          "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_TCP_CONG_ADVANCED
+          "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_TCP_CONG_BBR
+          "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_TCP_CONG_BBR3
+          "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_TCP_CONG_CUBIC
+          "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --disable CONFIG_TCP_CONG_BIC
+          "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --disable CONFIG_TCP_CONG_WESTWOOD
+          "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --disable CONFIG_TCP_CONG_HTCP
 
       # 4. Run your custom bash script
       - name: Run build script
