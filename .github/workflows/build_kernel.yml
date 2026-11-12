@@ -336,11 +336,11 @@ jobs:
 
           # ---- KernelSU side -------------------------------------------
           cd "$KSU_FOLDER"
-          patch -p1 --forward < "$SUSFS_KP/KernelSU/10_enable_susfs_for_ksu.patch" || true
+          patch -p1 < "$SUSFS_KP/KernelSU/10_enable_susfs_for_ksu.patch" || true
 
           # ---- Kernel side ---------------------------------------------
           cd "$GITHUB_WORKSPACE/$COMMON_KERNEL_FOLDER"
-          patch -p1 --forward < "$SUSFS_KP/50_add_susfs_in_gki-android15-6.6.patch" || true
+          patch -p1 < "$SUSFS_KP/50_add_susfs_in_gki-android15-6.6.patch" || true
 
           # ---- Fetch Pershoot side ---------------------------------------------
           cd $SUSFS_DIR
