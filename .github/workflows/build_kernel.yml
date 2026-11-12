@@ -610,8 +610,6 @@ jobs:
           echo "asb_level=$ASB_LEVEL" >> build_info.txt
           echo "kernel_release=$KERNEL_VERSION" >> build_info.txt
           echo "root_solution=$KSU_VARIANT" >> build_info.txt
-          echo "patch_adios=$PATCH_ADIOS" >> build_info.txt
-          echo "patch_bore=$PATCH_BORE" >> build_info.txt
           echo "susfs_version=${SUSVER:-none}" >> build_info.txt
           echo "$(grep 'BRANCH=' $COMMON_KERNEL_FOLDER/build.config.common)" >> build_info.txt
           echo "$(grep 'KMI_GENERATION=' $COMMON_KERNEL_FOLDER/build.config.common)" >> build_info.txt
