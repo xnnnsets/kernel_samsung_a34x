@@ -510,6 +510,11 @@ jobs:
           patch -p1 < adios_ioscheduler_6.6.patch
           cd ..
 
+      - name: Apply ADIOS I/O scheduler defconfig
+        run: |
+          "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_MQ_IOSHED_ADIOS
+          "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_MQ_IOSHED_DEFAULT_ADIOS
+
       - name: Apply Unicode Fix
         shell: bash
         run: |
@@ -603,6 +608,14 @@ jobs:
           cd "$COMMON_KERNEL_FOLDER"
           patch -p1 < "../$BOUTEILLE_KERNEL_PATCHES_FOLDER/common/IPv6_NAT_FIX.patch"
           cd ..
+
+      - name: switch to lz4
+        shell: bash
+        run: |
+          "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --disable CONFIG_ZRAM_DEF_COMP_LZORLE
+          "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --set-val CONFIG_ZRAM_DEF_COMP lz4
+          "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --disable CONFIG_ZRAM_DEF_COMP_LZORLE
+          "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_ZRAM_DEF_COMP_LZ4
 
       # 4. Run your custom bash script
       - name: Run build script
