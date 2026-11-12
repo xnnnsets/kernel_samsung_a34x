@@ -325,7 +325,7 @@ jobs:
           echo "SusFS version: $SUSVER"
 
           # ---- KernelSU side -------------------------------------------
-          cd "KSU_FOLDER"
+          cd "$KSU_FOLDER"
           patch -p1 --forward < "$SUSFS_KP/KernelSU/10_enable_susfs_for_ksu.patch" || true
 
           # What we set each SUSFS option to, checked against what the tree
