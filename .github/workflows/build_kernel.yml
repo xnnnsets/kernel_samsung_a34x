@@ -565,11 +565,11 @@ jobs:
      - name: apply unicode fix for specific kernel version
        shell: bash
        run: |
-        cd $COMMON_KERNEL_FOLDER
+         cd $COMMON_KERNEL_FOLDER
 
-        patch -p1 < "../../$BOUTEILLE_KERNEL_PATCHES_FOLDER/common/unicode_bypass_fix_6.1+.patch"
+         patch -p1 < "../../$BOUTEILLE_KERNEL_PATCHES_FOLDER/common/unicode_bypass_fix_6.1+.patch"
 
-        cd ..
+         cd ..
 
       # 4. Run your custom bash script
       - name: Run build script
