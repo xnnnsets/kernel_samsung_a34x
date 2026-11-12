@@ -33,6 +33,11 @@ on:
           type: boolean
           required: true
           default: false
+      susfs_ref:
+          description: 'simonpunk/susfs4ksu ref to patch SUSFS from. auto = gki-android15-6.6 branch, a branch/tag/40-char commit pins it, kosongkan = build without SUSFS'
+          type: string
+          required: false
+          default: 'auto'
 
 jobs:
   build:
@@ -42,6 +47,7 @@ jobs:
       KSU_COMMIT: ${{ github.event.inputs.ksu_commit }}
       PATCH_ADIOS: ${{ github.event.inputs.patch_adios == 'true' }}
       PATCH_BORE: ${{ github.event.inputs.patch_bore == 'true' }}
+      SUSFS_REF: ${{ github.event.inputs.susfs_ref || 'auto' }}
       COMMON_KERNEL_FOLDER: kernel-6.6
       BOUTEILLE_KERNEL_PATCHES_FOLDER: kernel_patches
       KSU_FOLDER: kernel-6.6/KernelSU-Next
@@ -60,6 +66,17 @@ jobs:
           sudo apt-get clean
           sudo rm -rf /usr/local
 
+      # NoMount, SUSFS and the CFI fix below all need the full kernel_patches
+      # repo on disk (not just one script), because apply_nomount_stack.sh and
+      # friends read their per-family patch files (ghost, hook, pathhide,
+      # susfs_fix_patches, ...) from BOUTEILLE_KERNEL_PATCHES_FOLDER. Cloned
+      # here, before KernelSU-Next setup, so the CFI fix step right after it
+      # can already reach it.
+      - name: Clone kernel_patches repository
+        if: ${{ env.KSU_VARIANT == 'KSU-NEXT' }}
+        run: |
+          git clone --depth=1 https://github.com/Bouteillepleine/kernel_patches "$BOUTEILLE_KERNEL_PATCHES_FOLDER"
+
       # 2. Setup KernelSU-Next (skip if non-root)
       - name: Setup KernelSU-Next
         if: ${{ env.KSU_VARIANT == 'KSU-NEXT' }}
@@ -73,6 +90,15 @@ jobs:
           fi
           cd ..
 
+      # KernelSU-Next 8b9d7a7a resolves the SELinux helpers through kallsyms and
+      # calls the raw address. Under legacy Clang CFI (< 6.1) that traps in
+      # cfi_check_fail during init -- a silent bootloop. No-op on a
+      # KernelSU-Next without the defect, and a no-op at runtime wherever
+      # CONFIG_CFI_CLANG is off.
+      - name: Fix KSU SELinux symbol calls under CFI
+        if: ${{ env.KSU_VARIANT == 'KSU-NEXT' }}
+        run: |
+          bash "$BOUTEILLE_KERNEL_PATCHES_FOLDER/scripts/fix_ksu_cfi_symbol_calls.sh"
 
       - name: Extract KSU Version Info and inject into Kbuild
         shell: bash
@@ -108,14 +134,6 @@ jobs:
           curl -LSs -o adios_ioscheduler_6.6.patch "https://raw.githubusercontent.com/Bouteillepleine/kernel_patches/main/experimental/adios_ioscheduler_6.6.patch"
           patch -p1 < adios_ioscheduler_6.6.patch
           cd ..
-
-      # NoMount needs the full kernel_patches repo on disk (not just the one
-      # script), because apply_nomount_stack.sh reads its per-family patch
-      # files (ghost, hook, pathhide, ...) from BOUTEILLE_KERNEL_PATCHES_FOLDER.
-      - name: Clone kernel_patches repository
-        if: ${{ env.KSU_VARIANT == 'KSU-NEXT' }}
-        run: |
-          git clone --depth=1 https://github.com/Bouteillepleine/kernel_patches "$BOUTEILLE_KERNEL_PATCHES_FOLDER"
 
       - name: Apply NoMount (hookless) Patch
         if: ${{ env.KSU_VARIANT == 'KSU-NEXT' }}
@@ -199,6 +217,180 @@ jobs:
         run: |
           bash "$BOUTEILLE_KERNEL_PATCHES_FOLDER/scripts/apply_nomount_stack.sh" verify
 
+      # SUSFS, applied on top of the NoMount stack already verified above.
+      # Cloned here so the GKI branch key (gki-android15-6.6, this device's
+      # own ASB branch) doesn't need duplicating any earlier in the job.
+      # Three parts, in order: the SUSFS sources into COMMON_KERNEL_FOLDER,
+      # the KernelSU-Next side (upstream's enable patch plus our
+      # per-rejected-file fix set, since the enable patch targets tiann's
+      # tree), then the kernel side. Every reject is either repaired by a
+      # named fix patch or fails the build -- a half-applied hiding stack
+      # boots and lies about what it hides, which is worse than a red run.
+      - name: Apply SUSFS
+        if: ${{ env.KSU_VARIANT == 'KSU-NEXT' && env.SUSFS_REF != '' }}
+        run: |
+          set -euo pipefail
+          echo "::group::Apply SUSFS"
+
+          SUSFS_URL="https://gitlab.com/simonpunk/susfs4ksu.git"
+          SUSFS_BRANCH="gki-android15-6.6"
+          SUSFS_DIR="$GITHUB_WORKSPACE/susfs4ksu"
+          rm -rf "$SUSFS_DIR"
+          if [ "$SUSFS_REF" = "auto" ]; then
+            git clone --depth=1 --branch "$SUSFS_BRANCH" "$SUSFS_URL" "$SUSFS_DIR"
+          elif [[ "$SUSFS_REF" =~ ^[0-9a-f]{40}$ ]]; then
+            git init -q "$SUSFS_DIR"
+            git -C "$SUSFS_DIR" remote add origin "$SUSFS_URL"
+            git -C "$SUSFS_DIR" fetch --depth 1 origin "$SUSFS_REF"
+            git -C "$SUSFS_DIR" checkout -q FETCH_HEAD
+          else
+            git clone --depth=1 --branch "$SUSFS_REF" "$SUSFS_URL" "$SUSFS_DIR"
+          fi
+          if [ ! -f "$SUSFS_DIR/kernel_patches/50_add_susfs_in_${SUSFS_BRANCH}.patch" ]; then
+            echo "::error::susfs4ksu@$SUSFS_REF carries no kernel_patches/50_add_susfs_in_${SUSFS_BRANCH}.patch; pass a ref from the $SUSFS_BRANCH branch or leave susfs_ref on auto"
+            exit 1
+          fi
+          echo "susfs4ksu: $SUSFS_REF = $(git -C "$SUSFS_DIR" log --oneline -1)"
+
+          SUSFS_KP="$SUSFS_DIR/kernel_patches"
+          FIX_BASE="$BOUTEILLE_KERNEL_PATCHES_FOLDER/next/susfs_fix_patches"
+
+          cp "$SUSFS_KP/fs/"*.c "$COMMON_KERNEL_FOLDER/fs/"
+          cp "$SUSFS_KP/include/linux/"*.h "$COMMON_KERNEL_FOLDER/include/linux/"
+
+          SUSVER="$(grep '#define SUSFS_VERSION' "$COMMON_KERNEL_FOLDER/include/linux/susfs.h" | awk -F'"' '{print $2}')"
+          if [ -z "$SUSVER" ]; then
+            echo "::error::Could not read SUSFS_VERSION from include/linux/susfs.h"
+            exit 1
+          fi
+          echo "SUSVER=$SUSVER" >> "$GITHUB_ENV"
+          echo "SusFS version: $SUSVER"
+
+          # Fall back to the newest fix set that is not newer than $SUSVER --
+          # susfs sometimes bumps SUSFS_VERSION on commits that change nothing
+          # this builder patches.
+          FIXSET="$SUSVER"
+          if [ ! -d "$FIX_BASE/$FIXSET" ]; then
+            FIXSET=""
+            cands="$(ls -1 "$FIX_BASE" 2>/dev/null | grep -xE 'v[0-9]+(\.[0-9]+)*' | sort -Vr || true)"
+            for cand in $cands; do
+              [ -d "$FIX_BASE/$cand" ] || continue
+              if [ "$(printf '%s\n%s\n' "$cand" "$SUSVER" | sort -V | awk 'NR==1')" = "$cand" ]; then
+                FIXSET="$cand"
+                break
+              fi
+            done
+            if [ -z "$FIXSET" ]; then
+              echo "::error::No KernelSU-Next fix set at or below SUSFS $SUSVER in kernel_patches/next/susfs_fix_patches."
+              exit 1
+            fi
+            echo "::warning::No KernelSU-Next fix set for SUSFS $SUSVER; falling back to $FIXSET, the newest at or below it."
+          fi
+          FIXDIR="$FIX_BASE/$FIXSET"
+          echo "fix set: next/susfs_fix_patches/$FIXSET"
+
+          # ---- KernelSU-Next side -------------------------------------------
+          cd "$KSU_FOLDER"
+          patch -p1 --forward < "$SUSFS_KP/KernelSU/10_enable_susfs_for_ksu.patch" || true
+
+          rejects="$(find ./kernel -maxdepth 2 -name '*.rej' | sort)"
+          for rej in $rejects; do
+            base="$(basename "$rej" .rej)"
+            fix="$FIXDIR/fix_$base.patch"
+            if [ ! -f "$fix" ]; then
+              echo "::error::$base was rejected and fix_$base.patch is not in the $FIXSET fix set."
+              exit 1
+            fi
+            patch -p1 --forward -F0 < "$fix"
+            rm -f "$rej"
+          done
+
+          patch -p1 --forward < "$FIXDIR/overwrite_hook_mode.patch"
+          patch -p1 --forward < "$FIXDIR/ksu_toolkit.patch"
+
+          # The enable patch rewrites KernelSU's close(2) wrapper into the raw
+          # close_fd(), which only exists from 5.11 onward; repaired
+          # unconditionally since preinit.c never produces a .rej for it.
+          if grep -qE '^[[:space:]]+close_fd\(' kernel/preinit/preinit.c; then
+            patch -p1 --forward -F0 < "$FIXDIR/preinit_close_fd.patch"
+          fi
+
+          left="$(find ./kernel -maxdepth 2 -name '*.rej' | sort)"
+          if [ -n "$left" ]; then
+            echo "::error::KernelSU-Next rejects left after the fix set:"
+            echo "$left" | sed 's/^/     /'
+            exit 1
+          fi
+          find . -name '*.orig' -delete
+
+          cd "$GITHUB_WORKSPACE"
+          # susfs's enable patch reverts KernelSU's generation-tracking seqno
+          # fix in kernel/selinux/rules.c, so it has to be re-applied here.
+          bash "$BOUTEILLE_KERNEL_PATCHES_FOLDER/scripts/apply_nomount_stack.sh" seqno
+
+          # ---- kernel side ---------------------------------------------------
+          # Dry-runs the susfs kernel patch, hands every rejected hunk to
+          # susfs_patch_surgery.py to be re-anchored, applies the remainder,
+          # and asserts the result. Written to run on a tree that already
+          # carries NoMount, which is why the NoMount steps come first.
+          bash "$BOUTEILLE_KERNEL_PATCHES_FOLDER/scripts/apply_susfs_kernel.sh"
+          cd "$COMMON_KERNEL_FOLDER"
+          if ! grep -q 'ksu_handle_faccessat' fs/open.c; then
+            echo "::error::fs/open.c has no ksu_handle_faccessat after the SUSFS kernel patch; the inline hooks did not land."
+            exit 1
+          fi
+
+          # What we set each SUSFS option to, checked against what the tree
+          # actually defines rather than trusted.
+          declare -A SUSFS_POLICY=(
+            [KSU_SUSFS]=y
+            [KSU_SUSFS_SUS_PATH]=y
+            [KSU_SUSFS_SUS_MOUNT]=y
+            [KSU_SUSFS_SUS_KSTAT]=y
+            [KSU_SUSFS_SUS_MAP]=y
+            [KSU_SUSFS_OPEN_REDIRECT]=y
+            [KSU_SUSFS_SPOOF_UNAME]=y
+            [KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG]=y
+            [KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS]=y
+            [KSU_SUSFS_ENABLE_LOG]=y
+            [KSU_SUSFS_PRIORITY_UID_FILTER]=n
+          )
+          cd "$GITHUB_WORKSPACE"
+          defined="$(grep -oE '^config KSU_SUSFS[A-Z_]*' "$KSU_FOLDER/kernel/Kconfig" | awk '{print $2}' | sort -u)"
+          listed="$(printf '%s\n' "${!SUSFS_POLICY[@]}" | sort)"
+          undecided="$(comm -13 <(echo "$listed") <(echo "$defined"))"
+          vanished="$(comm -23 <(echo "$listed") <(echo "$defined"))"
+          if [ -n "$undecided" ]; then
+            echo "::error::SUSFS $SUSVER defines options this builder has no setting for:"
+            echo "$undecided" | sed 's/^/     /'
+            exit 1
+          fi
+          if [ -n "$vanished" ]; then
+            echo "::error::This builder sets SUSFS options that $SUSVER no longer defines:"
+            echo "$vanished" | sed 's/^/     /'
+            exit 1
+          fi
+
+          echo "Add SUSFS Configuration Settings"
+          for sym in $listed; do
+            echo "CONFIG_${sym}=${SUSFS_POLICY[$sym]}"
+          done | tee -a "$COMMON_KERNEL_FOLDER/arch/arm64/configs/gki_defconfig" | sed 's/^/  /'
+
+          # Re-verify NoMount: SUSFS patches some of the same files, so prove
+          # the cloaks are still there rather than assuming it.
+          bash "$BOUTEILLE_KERNEL_PATCHES_FOLDER/scripts/apply_nomount_stack.sh" verify
+
+          echo "✅ SUSFS $SUSVER applied"
+          echo "::endgroup::"
+
+      - name: Keep app seccomp filters when KSU grants root
+        if: ${{ env.KSU_VARIANT == 'KSU-NEXT' }}
+        run: |
+          set -euo pipefail
+          echo "::group::Keep app seccomp filters"
+          python3 "$BOUTEILLE_KERNEL_PATCHES_FOLDER/scripts/fix_ksu_app_profile_seccomp.py" "$KSU_FOLDER"
+          echo "::endgroup::"
+
       - name: Apply BORE scheduler patch
         if: ${{ env.PATCH_BORE == 'true' }}
         run: |
@@ -248,6 +440,7 @@ jobs:
           echo "root_solution=$KSU_VARIANT" >> build_info.txt
           echo "patch_adios=$PATCH_ADIOS" >> build_info.txt
           echo "patch_bore=$PATCH_BORE" >> build_info.txt
+          echo "susfs_version=${SUSVER:-none}" >> build_info.txt
           echo "$(grep 'BRANCH=' kernel-6.6/build.config.common)" >> build_info.txt
           echo "$(grep 'KMI_GENERATION=' kernel-6.6/build.config.common)" >> build_info.txt
 
