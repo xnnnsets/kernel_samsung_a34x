@@ -328,6 +328,10 @@ jobs:
           cd "$KSU_FOLDER"
           patch -p1 --forward < "$SUSFS_KP/KernelSU/10_enable_susfs_for_ksu.patch" || true
 
+          # ---- Kernel side ---------------------------------------------
+          cd "$GITHUB_WORKSPACE/$COMMON_KERNEL_FOLDER"
+          patch -p1 --forward < "$SUSFS_KP/50_add_susfs_in_gki-android15-6.6.patch" || true
+
           # What we set each SUSFS option to, checked against what the tree
           # actually defines rather than trusted.
           declare -A SUSFS_POLICY=(
