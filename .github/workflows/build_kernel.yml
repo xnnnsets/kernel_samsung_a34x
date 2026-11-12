@@ -111,6 +111,59 @@ jobs:
           bash "$BOUTEILLE_KERNEL_PATCHES_FOLDER/scripts/apply_nomount_stack.sh" ghost
           bash "$BOUTEILLE_KERNEL_PATCHES_FOLDER/scripts/apply_nomount_stack.sh" pathhide
 
+
+      - name: Apply pathhide (manual, matches a34x tree)
+        if: ${{ env.KSU_VARIANT == 'KSU-NEXT' }}
+        run: |
+          cd kernel-6.6
+
+          echo "== 1. Copy pathhide.c & pathhide.h =="
+          cp "../$BOUTEILLE_KERNEL_PATCHES_FOLDER/common/_pathhide/pathhide.c" fs/pathhide.c
+          cp "../$BOUTEILLE_KERNEL_PATCHES_FOLDER/common/_pathhide/pathhide.h" fs/pathhide.h
+
+          echo "== 2. Apply patch utama (maps/smaps guard) =="
+          patch -p1 < "../$BOUTEILLE_KERNEL_PATCHES_FOLDER/common/_pathhide/pathhide_6.6_integration.patch"
+
+          echo "== 3. Apply patch map_files (base.c) =="
+          patch -p1 < "../$BOUTEILLE_KERNEL_PATCHES_FOLDER/common/_pathhide/pathhide_mapfiles_6.6_integration.patch"
+
+          echo "== 4. Choice & apply varian pagemap =="
+          if grep -q 'pagemap_scan_test_walk' fs/proc/task_mmu.c; then
+            PAGEMAP=pathhide_pagemap_6.12_integration.patch
+          elif awk '/^static int pagemap_pmd_range/,/^}/' fs/proc/task_mmu.c | grep -q 'bool migration'; then
+            PAGEMAP=pathhide_pagemap_5.10_integration.patch
+          else
+            PAGEMAP=pathhide_pagemap_6.6_integration.patch
+          fi
+          echo "  -> $PAGEMAP"
+          patch -p1 < "../$BOUTEILLE_KERNEL_PATCHES_FOLDER/common/_pathhide/$PAGEMAP"
+
+          echo "== 5. Choice & apply varian mincore =="
+          if grep -q 'vma_lookup(current->mm, addr)' mm/mincore.c; then
+            MINCORE=pathhide_mincore_6.12_integration.patch
+          else
+            MINCORE=pathhide_mincore_5.10_integration.patch
+          fi
+          echo "  -> $MINCORE"
+          patch -p1 < "../$BOUTEILLE_KERNEL_PATCHES_FOLDER/common/_pathhide/$MINCORE"
+
+          echo "== 6. Choice & apply varian accounting =="
+          if grep -q '\*resident = \*shared + __page_size_count(' fs/proc/task_mmu.c; then
+            ACCT=pathhide_accounting_pgsplit_integration.patch
+          elif grep -q '__page_size_count(mm->total_vm)' fs/proc/task_mmu.c; then
+            ACCT=pathhide_accounting_pgcompat_integration.patch
+          elif grep -q 'get_mm_counter_sum(mm, MM_ANONPAGES)' fs/proc/task_mmu.c; then
+            ACCT=pathhide_accounting_6.6_integration.patch
+          else
+            ACCT=pathhide_accounting_integration.patch
+          fi
+          echo "  -> $ACCT"
+          patch -p1 < "../$BOUTEILLE_KERNEL_PATCHES_FOLDER/common/_pathhide/$ACCT"
+
+          echo "== 7. Add obj-y += pathhide.o =="
+          grep -qE '^obj-y[[:space:]]*\+=.*pathhide\.o' fs/Makefile || echo 'obj-y += pathhide.o' >> fs/Makefile
+
+          cd ..
       # Every family is applied at fuzz 0, but `patch` still exits 0 when a hunk
       # lands at an offset -- and an offset can put a guard inside the wrong
       # function. That is not hypothetical: ghost_notdir.patch sat in
