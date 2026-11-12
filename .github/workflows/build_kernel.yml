@@ -117,7 +117,7 @@ jobs:
           cd ..
 
       - name: Extract KSU Version Info and inject into Kbuild
-        if: ${{ env.KSU_VARIANT == 'KSU-NEXT' }}
+        if: ${{ env.KSU_VARIANT == 'KSU-NEXT' || env.KSU_VARIANT == 'KSU-NEXT-SUSFS' }}
         shell: bash
         run: |
           cd $KSU_FOLDER
