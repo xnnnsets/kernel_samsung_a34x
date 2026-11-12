@@ -513,7 +513,7 @@ jobs:
       - name: Apply ADIOS I/O scheduler defconfig
         run: |
           "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_MQ_IOSHED_ADIOS
-          "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_MQ_IOSHED_DEFAULT_ADIOS
+          "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --set-val CONFIG_MQ_IOSHED_DEFAULT_ADIOS y
 
       - name: Apply Unicode Fix
         shell: bash
@@ -528,6 +528,7 @@ jobs:
           cd "$COMMON_KERNEL_FOLDER"
           # ABI: use ABI padding for SYSVIPC This commit allows us to enable CONFIG_SYSVIPC in defconfig without breaking kernel ABI
           patch -p1 < "../$BOUTEILLE_KERNEL_PATCHES_FOLDER/common/droidspaces/fix_sysvipc_kabi_6_7_8.patch"
+          patch -p1 < "../$BOUTEILLE_KERNEL_PATCHES_FOLDER/common/droidspaces/0001-Return-ghost-task-if-task-is-null-and-is-requested-b.patch"
           cd ..
 
       - name: add configs
