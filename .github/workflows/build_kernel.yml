@@ -24,16 +24,6 @@ on:
           type: string
           required: false
           default: ''
-      patch_adios:
-          description: 'Apply ADIOS I/O scheduler patch'
-          type: boolean
-          required: true
-          default: false
-      patch_bore:
-          description: 'Apply BORE scheduler patch'
-          type: boolean
-          required: true
-          default: false
       susfs_ref:
           description: 'SUSFS source: auto, custom ref, or disabled'
           type: choice
@@ -178,15 +168,6 @@ jobs:
         if: ${{ env.KSU_VARIANT == 'non-root' }}
         run: echo "ksu_variant=non-root, skipping KernelSU-Next setup."
 
-      # 3. Patch addon
-      - name: Apply ADIOS I/O scheduler patch
-        if: ${{ env.PATCH_ADIOS == 'true' }}
-        run: |
-          cd $COMMON_KERNEL_FOLDER
-          curl -LSs -o adios_ioscheduler_6.6.patch "https://raw.githubusercontent.com/Bouteillepleine/kernel_patches/main/experimental/adios_ioscheduler_6.6.patch"
-          patch -p1 < adios_ioscheduler_6.6.patch
-          cd ..
-
       - name: Apply NoMount (hookless) Patch
         if: ${{ env.KSU_VARIANT == 'KSU-NEXT' || env.KSU_VARIANT == 'KSU-TIAN' }}
         env:
@@ -203,7 +184,7 @@ jobs:
           if [[ "$KSU_VARIANT" == "KSU-NEXT" ]]; then
             bash "$BOUTEILLE_KERNEL_PATCHES_FOLDER/scripts/apply_nomount_stack.sh" hook
           elif [[ "$KSU_VARIANT" == "KSU-TIAN" ]]; then
-            bash "$BOUTEILLE_KERNEL_PATCHES_FOLDER/scripts/apply_nomount_stack.sh" hookless
+            bash "$BOUTEILLE_KERNEL_PATCHES_FOLDER/scripts/apply_nomount_stack.sh" hook || true
           fi
           bash "$BOUTEILLE_KERNEL_PATCHES_FOLDER/scripts/apply_nomount_stack.sh" ghost
           # bash "$BOUTEILLE_KERNEL_PATCHES_FOLDER/scripts/apply_nomount_stack.sh" pathhide
@@ -569,12 +550,28 @@ jobs:
           echo "::endgroup::"
 
       - name: Apply BORE scheduler patch
-        if: ${{ env.PATCH_BORE == 'true' }}
         run: |
           cd $COMMON_KERNEL_FOLDER
           curl -LSs -o bore_6.6.patch "https://raw.githubusercontent.com/Bouteillepleine/kernel_patches/main/experimental/bore_6.6.patch"
           patch -p1 < bore_6.6.patch
           cd ..
+
+      - name: Apply ADIOS I/O scheduler patch
+        run: |
+          cd $COMMON_KERNEL_FOLDER
+          curl -LSs -o adios_ioscheduler_6.6.patch "https://raw.githubusercontent.com/Bouteillepleine/kernel_patches/main/experimental/adios_ioscheduler_6.6.patch"
+          patch -p1 < adios_ioscheduler_6.6.patch
+          cd ..
+
+
+     - name: apply unicode fix for specific kernel version
+       shell: bash
+       run: |
+        cd $COMMON_KERNEL_FOLDER
+
+        patch -p1 < "../../$BOUTEILLE_KERNEL_PATCHES_FOLDER/common/unicode_bypass_fix_6.1+.patch"
+
+        cd ..
 
       # 4. Run your custom bash script
       - name: Run build script
