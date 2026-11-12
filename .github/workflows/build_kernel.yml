@@ -17,6 +17,7 @@ on:
           default: 'KSU-NEXT'
           options:
             - KSU-NEXT
+            - KSU-NEXT-SUSFS
             - KSU-TIAN
             - non-root
       ksu_commit:
@@ -91,6 +92,18 @@ jobs:
           fi
           cd ..
 
+      - name: Setup KernelSU-Next pershoot susfs
+        if: ${{ env.KSU_VARIANT == 'KSU-NEXT-SUSFS' }}
+        run: |
+          cd $COMMON_KERNEL_FOLDER
+          if [ -n "$KSU_COMMIT" ]; then
+            echo "Using custom KernelSU-Next ref: $KSU_COMMIT"
+            curl -LSs "https://raw.githubusercontent.com/pershoot/KernelSU-Next/dev-susfs/kernel/setup.sh" | bash -s "$KSU_COMMIT"
+          else
+            curl -LSs "https://raw.githubusercontent.com/pershoot/KernelSU-Next/dev-susfs/kernel/setup.sh" | bash -s dev-susfs
+          fi
+          cd ..
+
       - name: Setup KernelSU-Tian
         if: ${{ env.KSU_VARIANT == 'KSU-TIAN' }}
         run: |
@@ -108,9 +121,6 @@ jobs:
         shell: bash
         run: |
           cd $KSU_FOLDER
-
-          # Fetch dev branch for version info (tags, commits, etc.)
-          git fetch origin dev 2>/dev/null || true
 
           # Extract and export KSU version info from dev branch
           KSU_GIT_VERSION=$(git rev-list --count refs/remotes/origin/dev 2>/dev/null)
@@ -371,8 +381,8 @@ jobs:
           echo "✅ SUSFS $SUSVER applied"
           echo "::endgroup::"
 
-      - name: Apply SUSFS KSU NEXT
-        if: ${{ env.KSU_VARIANT == 'KSU-NEXT' && env.SUSFS_MODE != 'disabled' }}
+      - name: Setup pershoot KSUN with susfs
+        if: ${{ env.KSU_VARIANT == 'KSU-NEXT-SUSFS' && env.SUSFS_MODE != 'disabled' }}
         run: |
           set -euo pipefail
           echo "::group::Apply SUSFS"
@@ -417,7 +427,6 @@ jobs:
           echo "susfs4ksu: $SUSFS_REF = $(git -C "$SUSFS_DIR" log --oneline -1)"
 
           SUSFS_KP="$SUSFS_DIR/kernel_patches"
-          FIX_BASE="$BOUTEILLE_KERNEL_PATCHES_FOLDER/next/susfs_fix_patches"
 
           cp "$SUSFS_KP/fs/"*.c "$COMMON_KERNEL_FOLDER/fs/"
           cp "$SUSFS_KP/include/linux/"*.h "$COMMON_KERNEL_FOLDER/include/linux/"
@@ -430,79 +439,9 @@ jobs:
           echo "SUSVER=$SUSVER" >> "$GITHUB_ENV"
           echo "SusFS version: $SUSVER"
 
-          # Fall back to the newest fix set that is not newer than $SUSVER --
-          # susfs sometimes bumps SUSFS_VERSION on commits that change nothing
-          # this builder patches.
-          FIXSET="$SUSVER"
-          if [ ! -d "$FIX_BASE/$FIXSET" ]; then
-            FIXSET=""
-            cands="$(ls -1 "$FIX_BASE" 2>/dev/null | grep -xE 'v[0-9]+(\.[0-9]+)*' | sort -Vr || true)"
-            for cand in $cands; do
-              [ -d "$FIX_BASE/$cand" ] || continue
-              if [ "$(printf '%s\n%s\n' "$cand" "$SUSVER" | sort -V | awk 'NR==1')" = "$cand" ]; then
-                FIXSET="$cand"
-                break
-              fi
-            done
-            if [ -z "$FIXSET" ]; then
-              echo "::error::No KernelSU-Next fix set at or below SUSFS $SUSVER in kernel_patches/next/susfs_fix_patches."
-              exit 1
-            fi
-            echo "::warning::No KernelSU-Next fix set for SUSFS $SUSVER; falling back to $FIXSET, the newest at or below it."
-          fi
-          FIXDIR="$FIX_BASE/$FIXSET"
-          echo "fix set: next/susfs_fix_patches/$FIXSET"
-
-          # ---- KernelSU-Next side -------------------------------------------
-          cd "$KSU_FOLDER"
-          patch -p1 --forward < "$SUSFS_KP/KernelSU/10_enable_susfs_for_ksu.patch" || true
-
-          rejects="$(find ./kernel -maxdepth 2 -name '*.rej' | sort)"
-          for rej in $rejects; do
-            base="$(basename "$rej" .rej)"
-            fix="$FIXDIR/fix_$base.patch"
-            if [ ! -f "$fix" ]; then
-              echo "::error::$base was rejected and fix_$base.patch is not in the $FIXSET fix set."
-              exit 1
-            fi
-            patch -p1 --forward -F0 < "$fix"
-            rm -f "$rej"
-          done
-
-          patch -p1 --forward < "$FIXDIR/overwrite_hook_mode.patch"
-          patch -p1 --forward < "$FIXDIR/ksu_toolkit.patch"
-
-          # The enable patch rewrites KernelSU's close(2) wrapper into the raw
-          # close_fd(), which only exists from 5.11 onward; repaired
-          # unconditionally since preinit.c never produces a .rej for it.
-          if grep -qE '^[[:space:]]+close_fd\(' kernel/preinit/preinit.c; then
-            patch -p1 --forward -F0 < "$FIXDIR/preinit_close_fd.patch"
-          fi
-
-          left="$(find ./kernel -maxdepth 2 -name '*.rej' | sort)"
-          if [ -n "$left" ]; then
-            echo "::error::KernelSU-Next rejects left after the fix set:"
-            echo "$left" | sed 's/^/     /'
-            exit 1
-          fi
-          find . -name '*.orig' -delete
-
-          cd "$GITHUB_WORKSPACE"
-          # susfs's enable patch reverts KernelSU's generation-tracking seqno
-          # fix in kernel/selinux/rules.c, so it has to be re-applied here.
-          bash "$BOUTEILLE_KERNEL_PATCHES_FOLDER/scripts/apply_nomount_stack.sh" seqno
-
-          # ---- kernel side ---------------------------------------------------
-          # Dry-runs the susfs kernel patch, hands every rejected hunk to
-          # susfs_patch_surgery.py to be re-anchored, applies the remainder,
-          # and asserts the result. Written to run on a tree that already
-          # carries NoMount, which is why the NoMount steps come first.
-          bash "$BOUTEILLE_KERNEL_PATCHES_FOLDER/scripts/apply_susfs_kernel.sh"
-          cd "$COMMON_KERNEL_FOLDER"
-          if ! grep -q 'ksu_handle_faccessat' fs/open.c; then
-            echo "::error::fs/open.c has no ksu_handle_faccessat after the SUSFS kernel patch; the inline hooks did not land."
-            exit 1
-          fi
+          # ---- Kernel side ---------------------------------------------
+          cd "$GITHUB_WORKSPACE/$COMMON_KERNEL_FOLDER"
+          patch -p1 --forward < "$SUSFS_KP/50_add_susfs_in_gki-android15-6.6.patch" || true
 
           # What we set each SUSFS option to, checked against what the tree
           # actually defines rather than trusted.
@@ -539,10 +478,6 @@ jobs:
           for sym in $listed; do
             echo "CONFIG_${sym}=${SUSFS_POLICY[$sym]}"
           done | tee -a "$COMMON_KERNEL_FOLDER/arch/arm64/configs/gki_defconfig" | sed 's/^/  /'
-
-          # Re-verify NoMount: SUSFS patches some of the same files, so prove
-          # the cloaks are still there rather than assuming it.
-          bash "$BOUTEILLE_KERNEL_PATCHES_FOLDER/scripts/apply_nomount_stack.sh" verify
 
           echo "✅ SUSFS $SUSVER applied"
           echo "::endgroup::"
