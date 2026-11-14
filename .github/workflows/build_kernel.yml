@@ -620,6 +620,34 @@ jobs:
           "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_TMPFS_XATTR
           "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_TMPFS_POSIX_ACL
 
+      - name: apply add timeout wakelocks globally
+        shell: bash
+        run: |
+          cd "$COMMON_KERNEL_FOLDER"
+          patch -p1 < "../$BOUTEILLE_KERNEL_PATCHES_FOLDER/common/add_timeout_wakelocks_globally.patch"
+          cd ..
+
+      - name: apply adjust cpu scan order
+        shell: bash
+        run: |
+          cd "$COMMON_KERNEL_FOLDER"
+          patch -p1 < "../$BOUTEILLE_KERNEL_PATCHES_FOLDER/common/adjust_cpu_scan_order.patch"
+          cd ..
+
+      - name: apply file struct 8bytes align
+        shell: bash
+        run: |
+          cd "$COMMON_KERNEL_FOLDER"
+          patch -p1 < "../$BOUTEILLE_KERNEL_PATCHES_FOLDER/common/file_struct_8bytes_align.patch"
+          cd ..
+
+      - name: apply improve int_sqrt
+        shell: bash
+        run: |
+          cd "$COMMON_KERNEL_FOLDER"
+          patch -p1 < "../$BOUTEILLE_KERNEL_PATCHES_FOLDER/common/int_sqrt.patch"
+          cd ..
+
       # 4. Run your custom bash script
       - name: Run build script
         run: |
