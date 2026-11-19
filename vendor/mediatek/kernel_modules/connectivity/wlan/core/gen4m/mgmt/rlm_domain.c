@@ -1608,7 +1608,11 @@ struct COUNTRY_LIMIT_CHNL_GRP_TABLE g_rCountryLmtChGrpTbl[] = {
 #endif
 };
 #endif
-
+#if (CFG_CH_SELECT_ENHANCEMENT == 1)
+static const uint16_t g_u2IndoorBw20[] = {
+	COUNTRY_CODE_ID,
+};
+#endif
 /* group for countries that marked channel 36~64 as indoor channel */
 static const uint16_t g_u2IndoorType0[] = {
 	COUNTRY_CODE_GG, COUNTRY_CODE_GP, COUNTRY_CODE_GR, COUNTRY_CODE_GL,
@@ -3306,16 +3310,12 @@ u_int8_t rlmDomainIsLegalChannel_V2(struct ADAPTER *prAdapter,
 	return FALSE;
 #endif
 }
-
+#if CFG_CH_SELECT_ENHANCEMENT
 u_int8_t rlmDomainIsStaSapIndoorConn(struct ADAPTER *prAdapter)
 {
-#if CFG_CH_SELECT_ENHANCEMENT
 	return prAdapter->rWifiVar.ucStaSapIndoorConn;
-#else
-	return 0;
-#endif
 }
-
+#endif
 u_int8_t rlmDomainIsIndoorChannel(struct ADAPTER *prAdapter,
 				 enum ENUM_BAND eBand, uint8_t ucChannel)
 {
@@ -3383,7 +3383,27 @@ u_int8_t rlmDomainIsIndoorChannel(struct ADAPTER *prAdapter,
 
 	return FALSE;
 }
+#if (CFG_CH_SELECT_ENHANCEMENT == 1)
+u_int8_t rlmDomainIsIndoorBw20(struct ADAPTER *prAdapter,
+				 enum ENUM_BAND eBand, uint8_t ucChannel)
+{
+	if (eBand == BAND_5G) {
+		uint32_t u4CountryNum = 0;
+		uint8_t i;
 
+		if (ucChannel >= 149 && ucChannel <= 165) {
+			u4CountryNum = ARRAY_SIZE(g_u2IndoorBw20);
+			for (i = 0; i < u4CountryNum; i++) {
+				if (g_u2IndoorBw20[i] ==
+				prAdapter->rWifiVar.u2CountryCode)
+				return TRUE;
+			}
+		}
+	}
+
+	return FALSE;
+}
+#endif
 u_int8_t rlmDomainIsLegalChannel(struct ADAPTER *prAdapter,
 				 enum ENUM_BAND eBand, uint8_t ucChannel)
 {

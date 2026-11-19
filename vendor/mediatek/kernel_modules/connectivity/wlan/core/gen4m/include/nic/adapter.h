@@ -819,6 +819,11 @@ struct WIFI_VAR {
 #endif /* CFG_SUPPORT_NAN_R4_PAIRING */
 #endif
 
+#if CFG_SUPPORT_WONDERTAP
+	struct WON_DEV_FSM_INFO *prWonDevFsmInfo;
+	struct WON_ROLE_FSM_INFO *aprWonRoleFsmInfo[KAL_WON_NUM];
+#endif
+
 #if CFG_ENABLE_WIFI_DIRECT
 	struct P2P_CONNECTION_SETTINGS *prP2PConnSettings[BSS_P2P_NUM];
 
@@ -851,6 +856,7 @@ struct WIFI_VAR {
 	uint8_t aucMacAddress[KAL_AIS_NUM][MAC_ADDR_LEN];
 	uint8_t aucP2pDevAddr[KAL_P2P_NUM][MAC_ADDR_LEN];
 	uint8_t aucInterfaceAddress[KAL_P2P_NUM][MAC_ADDR_LEN];
+	uint8_t aucWonAddress[KAL_WON_NUM][MAC_ADDR_LEN];
 
 	uint8_t ucAvailablePhyTypeSet;
 
@@ -1070,6 +1076,11 @@ struct WIFI_VAR {
 	uint8_t ucP2p5gBandwidth;
 	uint8_t ucP2p2gBandwidth;
 	uint8_t ucP2p6gBandwidth;
+#if CFG_SUPPORT_WONDERTAP
+	uint8_t ucWon2gBandwidth;
+	uint8_t ucWon5gBandwidth;
+	uint8_t ucWon6gBandwidth;
+#endif
 
 	/* If enable, AP channel bandwidth Channel
 	 * Center Frequency Segment 0/1
@@ -1221,6 +1232,13 @@ struct WIFI_VAR {
 	uint32_t u4WakeLockThreadWakeup;
 	uint32_t u4RegP2pIfAtProbe; /* register p2p interface during probe */
 	uint8_t ucRegP2pMode;
+
+#if CFG_SUPPORT_WONDERTAP
+	uint32_t u4RegWonIfAtProbe;
+	uint8_t ucRegWonMode;
+	u_int8_t fgWonNoDisconnect;
+#endif
+
 	/* p2p group interface use the same mac addr as p2p device interface */
 	uint8_t ucP2pShareMacAddr;
 	uint8_t ucSmartRTS;
@@ -1281,6 +1299,10 @@ struct WIFI_VAR {
 	uint32_t u4MccBoostPresentTime;
 	uint32_t u4MccBoostForAllTputLvTh;
 #endif /* CFG_SUPPORT_MCC_BOOST_CPU */
+#if CFG_SUPPORT_WONDERTAP
+	uint32_t u4WonBoostTputLvTh;
+	uint32_t u4WonBoostLevel;
+#endif /* CFG_SUPPORT_WONDERTAP */
 	uint32_t u4NanBoostLevel;
 	uint32_t u4NanBoostInit;
 	uint32_t u4NanRescheduleInit;
@@ -2464,6 +2486,15 @@ struct ADAPTER {
 
 	uint8_t ucTxTimeoutStaIdx;
 
+#if CFG_SUPPORT_WONDERTAP
+	uint8_t u4WonMode;
+	u_int8_t fgIsWONRegistered;
+	u_int8_t fgIsWONRunning;
+	enum ENUM_NET_REG_STATE rWONNetRegState;
+	enum ENUM_WON_REG_STATE rWONRegState;
+	struct WON_DEV_INFO *prWonInfo;
+#endif
+
 #if CFG_SUPPORT_NAN
 	enum ENUM_NET_REG_STATE rNanNetRegState;
 	enum NanDiscType rNanDiscType;
@@ -2750,6 +2781,10 @@ struct ADAPTER {
 	u_int8_t fgMccStateChange;
 	u_int8_t fgMccBoost;
 #endif /* CFG_SUPPORT_MCC_BOOST_CPU */
+#if CFG_SUPPORT_WONDERTAP
+	u_int8_t fgWonStateChange;
+	u_int8_t fgWonBoost;
+#endif /* CFG_SUPPORT_WONDERTAP */
 
 	/* ICAP */
 	u_int8_t ucICapDone;
@@ -3141,6 +3176,14 @@ struct ADAPTER {
 #define IS_BSS_NAN(_prBssInfo) \
 	(_prBssInfo && \
 	((_prBssInfo)->eNetworkType == NETWORK_TYPE_NAN))
+
+#define IS_BSS_WON(_prBssInfo) \
+	(_prBssInfo && \
+	((_prBssInfo)->eNetworkType == NETWORK_TYPE_WON))
+
+#define IS_BSS_INDEX_WON(_prAdapter, _BssIndex) \
+	(GET_BSS_INFO_BY_INDEX(_prAdapter, _BssIndex) && \
+	IS_BSS_WON(GET_BSS_INFO_BY_INDEX(_prAdapter, _BssIndex)))
 
 #define SET_NET_ACTIVE(_prAdapter, _BssIndex) \
 	{(_prAdapter)->aprBssInfo[(_BssIndex)]->fgIsNetActive = TRUE; }

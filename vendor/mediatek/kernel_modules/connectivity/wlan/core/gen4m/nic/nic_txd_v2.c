@@ -95,7 +95,8 @@ uint8_t nic_txd_v2_queue_idx_op(
 }
 
 #if (CFG_TCP_IP_CHKSUM_OFFLOAD == 1)
-void nic_txd_v2_chksum_op(void *prTxDesc, uint8_t ucChksumFlag,
+void nic_txd_v2_chksum_op(struct ADAPTER *prAdapter,
+			void *prTxDesc, uint8_t ucChksumFlag,
 			struct MSDU_INFO *prMsduInfo)
 {
 	if ((ucChksumFlag & TX_CS_IP_GEN))
@@ -113,7 +114,11 @@ void nic_txd_v2_chksum_op(void *prTxDesc, uint8_t ucChksumFlag,
 	 * were disabled for special test case.
 	 */
 	if (!(ucChksumFlag & (TX_CS_IP_GEN | TX_CS_TCP_UDP_GEN)) &&
-	    prMsduInfo->ucPktType != ENUM_PKT_ICMP)
+	    prMsduInfo->ucPktType != ENUM_PKT_ICMP
+#if (CFG_SUPPORT_WONDERTAP == 1)
+	    && !IS_BSS_INDEX_WON(prAdapter, prMsduInfo->ucBssIndex)
+#endif
+	    )
 		HAL_MAC_CONNAC2X_TXD_UNSET_HW_AMSDU(
 			(struct HW_MAC_CONNAC2X_TX_DESC *)prTxDesc);
 }

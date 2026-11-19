@@ -1016,6 +1016,12 @@ void cnmChMngrHandleChEvent(struct ADAPTER *prAdapter,
 	else if (prBssInfo && (prBssInfo->eNetworkType == NETWORK_TYPE_NAN))
 		prChResp->rMsgHdr.eMsgId = MID_CNM_NAN_CH_GRANT;
 #endif
+#if CFG_SUPPORT_WONDERTAP
+	else if (prBssInfo && (prBssInfo->eNetworkType == NETWORK_TYPE_WON)) {
+		DBGLOG(CNM, INFO, "WON channel granted.\n");
+		prChResp->rMsgHdr.eMsgId = MID_CNM_WON_CH_GRANT;
+	}
+#endif
 	else {
 		cnmMemFree(prAdapter, prChResp);
 		return;
@@ -2216,6 +2222,19 @@ uint8_t cnmGetBssMaxBw(struct ADAPTER *prAdapter,
 #endif
 	}
 #endif
+#if CFG_SUPPORT_WONDERTAP
+	else if (IS_BSS_WON(prBssInfo)) {
+		/* TODO: set correct BW */
+		if (prBssInfo->eBand == BAND_2G4)
+			ucMaxBandwidth = prAdapter->rWifiVar.ucWon2gBandwidth;
+		else if (prBssInfo->eBand == BAND_5G)
+			ucMaxBandwidth = prAdapter->rWifiVar.ucWon5gBandwidth;
+		else if (prBssInfo->eBand == BAND_6G)
+			ucMaxBandwidth = prAdapter->rWifiVar.ucWon6gBandwidth;
+		else
+			ucMaxBandwidth = MAX_BW_20MHZ;
+	}
+#endif
 
 #if (CFG_SUPPORT_SINGLE_SKU == 1)
 	if (IS_BSS_AIS(prBssInfo) && prBssDesc) {
@@ -2232,6 +2251,15 @@ uint8_t cnmGetBssMaxBw(struct ADAPTER *prAdapter,
 		DBGLOG(CNM, TRACE, "pCH=%d, BW=%d\n",
 			prBssDesc->ucChannelNum, ucMaxBandwidth);
 	} else {
+#if (CFG_CH_SELECT_ENHANCEMENT == 1)
+		if (p2pFuncIsAPMode(
+			prAdapter->rWifiVar.
+			prP2PConnSettings[prBssInfo->u4PrivateData]) &&
+			rlmDomainIsIndoorBw20(prAdapter,
+				 prBssInfo->eBand,
+				 prBssInfo->ucPrimaryChannel))
+			ucMaxBandwidth = MAX_BW_20MHZ;
+#endif
 		DBGLOG(CNM, TRACE, "pCH=%d, BW=%d\n",
 			prBssInfo->ucPrimaryChannel, ucMaxBandwidth);
 	}

@@ -44,8 +44,13 @@
 // #define FLOOR_NEG(X)		((X-(int)(X)) < 0 ? (int)(X-1) : (int)(X))
 // #define FLOOR(X)		( ((X) > 0) ? FLOOR_POS(X) : FLOOR_NEG(X) )
 
+#ifndef MIN
 #define MIN(X,Y)		(((X) > (Y)) ? (Y) : (X))
+#endif
+
+#ifndef MAX
 #define MAX(X,Y)		(((X) > (Y)) ? (X) : (Y))
+#endif
 #define ABS(X)			(((X) > 0) ? (X) : -(X))
 #define ROUND(X,Y)		((int)((2*(X))+(Y))/(2*(Y)))
 #define BUFFER_NAME_LEN		50
@@ -637,6 +642,11 @@ static bool mtk_mae_config_dma(struct mtk_mae_dev *mae_dev, uint32_t idx)
 
 		// config the base address of output buffer
 		if (param->maeMode == AISEG) {
+			if (param->outputNum > AISEG_MAP_NUM) {
+				mae_dev_info(mae_dev->dev, "%s, invalid outputNum > AISEG_MAP_NUM: %u\n",
+					__func__, param->outputNum);
+				return false;
+			}
 			for (i = 0; i < param->outputNum; i++) {
 				addr = mae_dev->map_table->aiseg_output_dmabuf_info[idx][i].pa +
 					model_table->aisegOutput[i].offset;
@@ -3326,6 +3336,11 @@ static bool mtk_mae_config_fld_v0(struct mtk_mae_dev *mae_dev, uint32_t idx)
 		(struct EnqueParam*)mae_dev->map_table->param_dmabuf_info[idx].kva;
 	uint64_t addr = 0;
 	uint8_t i;
+	if (param->fldConfig.fldFaceNum > MAX_FLD_V0_FACE_NUM) {
+		mae_dev_info(mae_dev->dev, "%s, invalid fldFaceNum: %u\n",
+			__func__, param->fldConfig.fldFaceNum);
+		return false;
+	}
 
 	MAE_CMDQ_WRITE_REG(mae_dev->pkt[idx], FDVT_ENABLE, 0x4000000);	// [26] ddren set for v0 fld
 
@@ -3476,6 +3491,9 @@ static bool mtk_mae_get_fd_v0_result(struct mtk_mae_dev *mae_dev, uint32_t idx)
 	struct EnqueParam *param =
 		(struct EnqueParam *)mae_dev->map_table->param_dmabuf_info[idx].kva;
 	uint32_t i;
+
+	if (param->pyramidNumber > MAX_OUTER_LOOP_NUM)
+		return false;
 
 	for (i = 0; i < param->pyramidNumber; i++) {
 		switch (mae_dev->core_sel[idx][i]) {

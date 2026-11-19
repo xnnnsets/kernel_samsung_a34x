@@ -821,7 +821,8 @@ static uint8_t assocSkipRSNXIe(struct ADAPTER *prAdapter,
 		/* skip rsnxe if target ap doesn't support rsnxe */
 		if (prTargetBss && !prTargetBss->fgIERSNX &&
 		   (prStaRec->ucAuthAlgNum == AUTH_ALGORITHM_NUM_FT ||
-		    prTargetBss->eRsnSelectedAuthMode == AUTH_MODE_WPA2_PSK))
+		    (prStaRec->ucAuthAlgNum == AUTH_ALGORITHM_NUM_OPEN_SYSTEM &&
+		     prTargetBss->eRsnSelectedAuthMode != AUTH_MODE_WPA3_OWE)))
 			return TRUE;
 	}
 

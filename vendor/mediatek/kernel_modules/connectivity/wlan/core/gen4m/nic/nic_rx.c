@@ -1257,6 +1257,34 @@ void nicRxProcessPktWithoutReorder(struct ADAPTER
 	}
 #endif
 
+#if CFG_SUPPORT_WONDERTAP
+	if (IS_BSS_INDEX_WON(prAdapter,
+		GLUE_GET_PKT_BSS_IDX(prSwRfb->pvPacket))) {
+#if CFG_WONDERTAP_TX_RX_DEBUG
+		DBGLOG(WON, INFO,
+			"WONDER Rx Pkt BSSidx:%u, StaRecIdx:%u, widx:%u, tid:%u, SN:%u, fmt:%u, bmc:%u, pkttype:%u\n",
+			GLUE_GET_PKT_BSS_IDX(prSwRfb->pvPacket),
+			prSwRfb->ucStaRecIdx,
+			prSwRfb->ucWlanIdx,
+			prSwRfb->ucTid,
+			prSwRfb->u2SSN,
+			prSwRfb->ucPayloadFormat,
+			(prSwRfb->fgIsBC | prSwRfb->fgIsMC),
+			prSwRfb->ucPacketType);
+#endif
+		radiotapFillRadiotap(prAdapter, prSwRfb);
+		return;
+	}
+#if CFG_WONDERTAP_TX_RX_DEBUG
+	DBGLOG(WON, INFO,
+		"NOT WONDER Rx Data BSSidx:%u, StaRecIdx:%u, widx:%u\n",
+		secGetBssIdxByWlanIdx(prAdapter,
+			prSwRfb->ucWlanIdx),
+		prSwRfb->ucStaRecIdx,
+		prSwRfb->ucWlanIdx);
+#endif
+#endif
+
 	if (kalProcessRxPacket(prAdapter->prGlueInfo,
 			       prSwRfb->pvPacket,
 			       prSwRfb->pvHeader,
@@ -1981,6 +2009,88 @@ void nicRxParseDropPkt(struct SW_RFB *prSwRfb)
 	StatsRxPktInfoDisplay(prSwRfb);
 }
 
+#if CFG_SUPPORT_WONDERTAP
+static void nicRxPrintWonHdrAddr(const uint8_t *fn, struct SW_RFB *prSwRfb)
+{
+	struct WLAN_MAC_HEADER *prWlanHdr =
+		(struct WLAN_MAC_HEADER *)prSwRfb->pvHeader;
+
+	if (!prWlanHdr)
+		return;
+
+	DBGLOG(WON, INFO,
+		"%s: Addr1: " MACSTR ", Addr2: " MACSTR ", Addr3: " MACSTR "\n",
+		fn,
+		MAC2STR(prWlanHdr->aucAddr1),
+		MAC2STR(prWlanHdr->aucAddr2),
+		MAC2STR(prWlanHdr->aucAddr3));
+}
+
+static uint8_t nicRxGetWonBssIdx(struct ADAPTER *prAdapter,
+	struct SW_RFB *prSwRfb)
+{
+	uint8_t ucBssIndex;
+	struct STA_RECORD *prStaRec;
+	struct WLAN_MAC_HEADER *prWlanHdr =
+		(struct WLAN_MAC_HEADER *)prSwRfb->pvHeader;
+
+	prStaRec = prSwRfb->prStaRec;
+	if (prStaRec) {
+		ucBssIndex = prStaRec->ucBssIndex;
+		if (IS_BSS_INDEX_WON(prAdapter, ucBssIndex))
+			return ucBssIndex;
+	}
+
+	for (ucBssIndex = 0; ucBssIndex < MAX_BSSID_NUM; ucBssIndex++) {
+		if (IS_BSS_INDEX_WON(prAdapter, ucBssIndex)) {
+			struct BSS_INFO *prBssInfo = GET_BSS_INFO_BY_INDEX(
+				prAdapter, ucBssIndex);
+
+			if (EQUAL_MAC_ADDR(prBssInfo->aucBSSID,
+				prWlanHdr->aucAddr3))
+				return ucBssIndex;
+		}
+	}
+	return MAX_BSSID_NUM;
+}
+
+u_int8_t nicRxHandleWonPkt(struct ADAPTER *prAdapter,
+	struct SW_RFB *prSwRfb)
+{
+	uint8_t ucBssIndex;
+#if CFG_WONDERTAP_TX_RX_DEBUG
+	u_int8_t fgIsBMC = (prSwRfb->fgIsBC | prSwRfb->fgIsMC);
+#endif /* CFG_WONDERTAP_TX_RX_DEBUG */
+
+	if (!prAdapter->fgIsWONRunning || prSwRfb->fgHdrTran)
+		return FALSE;
+
+	ucBssIndex = nicRxGetWonBssIdx(prAdapter, prSwRfb);
+	if (ucBssIndex >= MAX_BSSID_NUM)
+		return FALSE;
+
+#if CFG_WONDERTAP_TX_RX_DEBUG
+	DBGLOG(WON, INFO,
+		"WON Rx Data [BSSidx,StaRecIdx,widx,tid,SN,fmt,Bmc]:%u,%u,%u,%u,%u,%u,%u\n",
+		ucBssIndex,
+		prSwRfb->ucStaRecIdx,
+		prSwRfb->ucWlanIdx,
+		prSwRfb->ucTid,
+		prSwRfb->u2SSN,
+		prSwRfb->ucPayloadFormat,
+		fgIsBMC);
+	nicRxPrintWonHdrAddr(__func__, prSwRfb);
+#endif /* CFG_WONDERTAP_TX_RX_DEBUG */
+
+	GLUE_SET_PKT_BSS_IDX(prSwRfb->pvPacket, ucBssIndex);
+	prSwRfb->eDst = RX_PKT_DESTINATION_HOST;
+
+	nicRxProcessPktWithoutReorder(prAdapter, prSwRfb);
+
+	return TRUE;
+}
+#endif /* CFG_SUPPORT_WONDERTAP */
+
 /*----------------------------------------------------------------------------*/
 /*!
  * @brief Process HIF data packet
@@ -2021,6 +2131,11 @@ void nicRxProcessDataPacket(struct ADAPTER *prAdapter,
 #endif /* CFG_RFB_TRACK */
 
 	nicRxFillRFB(prAdapter, prSwRfb);
+
+#if CFG_SUPPORT_WONDERTAP_RX_BYPASS
+	if (nicRxHandleWonPkt(prAdapter, prSwRfb))
+		return;
+#endif /* CFG_SUPPORT_WONDERTAP */
 
 	fgDrop = FALSE;
 
@@ -4157,6 +4272,13 @@ uint32_t nicRxProcessActionFrame(struct ADAPTER *prAdapter,
 	default:
 		break;
 	}			/* end of switch case */
+
+#if CFG_SUPPORT_WONDERTAP
+	if (prAdapter->fgIsWONRegistered) {
+		wonRxProcessActionFrame(prAdapter, prSwRfb);
+		return WLAN_STATUS_PENDING;
+	}
+#endif
 
 	return WLAN_STATUS_SUCCESS;
 }

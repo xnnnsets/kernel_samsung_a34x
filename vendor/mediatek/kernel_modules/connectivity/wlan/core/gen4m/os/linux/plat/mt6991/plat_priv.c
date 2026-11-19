@@ -1157,3 +1157,10 @@ uint32_t kalGetTxBigCpuMask(void)
 {
 	return TX_CPU_BIG_CORE;
 }
+
+#if CFG_SUPPORT_WONDERTAP
+u_int8_t kalIsWonBoost(struct ADAPTER *prAdapter)
+{
+	return prAdapter->fgWonBoost;
+}
+#endif /* CFG_SUPPORT_WONDERTAP */

@@ -2311,6 +2311,18 @@ uint32_t nanProcessAsccCommand(struct ADAPTER *prAdapter, const uint8_t *buf,
 	DBGLOG(NAN, INFO, "Consuming %zu bytes\n",
 	       sizeof(struct IE_NAN_ASCC_CMD));
 
+	/* u2Length comes from framework and is untrusted. Reject commands whose
+	 * declared size exceeds the passed-in buffer or the working buffer
+	 * limit to avoid out-of-bound read and link list corruption.
+	 */
+	if (EXT_MSG_SIZE(c) > u4Size ||
+	    EXT_MSG_SIZE(c) > NAN_MAX_EXT_DATA_SIZE) {
+		DBGLOG(NAN, WARN,
+		       "Invalid ASCC cmd length, skip: msg_size=%zu, buf_size=%zu, max=%u\n",
+		       EXT_MSG_SIZE(c), u4Size, NAN_MAX_EXT_DATA_SIZE);
+		return WLAN_STATUS_FAILURE;
+	}
+
 	dumpAsccCommand(c);
 
 	offset += OFFSET_OF(struct IE_NAN_ASCC_CMD, aucEntry);

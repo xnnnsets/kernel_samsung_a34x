@@ -944,6 +944,8 @@ static int mtk_mae_hw_connect(struct mtk_mae_dev *mae_dev)
 		/* register slc debug */
 		if (mae_slc_dbg_en) {
 			mae_gid = -1;
+			if (mae_slbc_gid_data)
+				vfree(mae_slbc_gid_data);
 			mae_slbc_gid_data = vzalloc(sizeof(struct slbc_gid_data));
 			mae_slbc_gid_data->sign = SLC_DATA_MAGIC;
 			ret = slbc_gid_request(ID_MAE, &mae_gid, mae_slbc_gid_data);
@@ -1022,8 +1024,10 @@ static void mtk_mae_umap_detach(struct mtk_mae_dev *mae_dev,
 		info->is_attach = false;
 	}
 
-	if (!IS_ERR(info->dmabuf) && info->dmabuf)
+	if (!IS_ERR(info->dmabuf) && info->dmabuf){
 		dma_buf_put(info->dmabuf);
+		info->dmabuf = NULL;
+	}
 
 	info->kva = 0;
 	info->pa = 0;
@@ -1115,6 +1119,7 @@ static void mtk_mae_hw_disconnect(struct mtk_mae_dev *mae_dev)
 				dev_info(mae_dev->dev, "slc release fail");
 
 			vfree(mae_slbc_gid_data);
+			mae_slbc_gid_data = NULL;
 		}
 	#endif
 
@@ -1586,6 +1591,12 @@ int mtk_mae_vidioc_qbuf(struct file *file, void *priv,
 
 	map_table = mae_dev->map_table;
 
+	if (idx >= REQUEST_BUFFER_NUM) {
+		mae_dev_info(mae_dev->dev, "%s, invalid buffer index: %u\n",
+			__func__, buf->index);
+		return -EINVAL;
+	}
+
 	if (buf->length < MAX_PLANE) {
 		mae_dev_info(mae_dev->dev, "%s, buf length is too small (%d/%d)\n",
 			__func__, buf->length, MAX_PLANE);
@@ -1802,7 +1813,6 @@ int mtk_mae_vidioc_qbuf(struct file *file, void *priv,
 			}
 		}
 	}
-
 	// get pa of image
 	mtk_mae_umap_detach(mae_dev, &map_table->image_dmabuf_info[idx]);
 	ret = mtk_mae_set_dmabuf_info(mae_dev,

@@ -197,19 +197,20 @@ static __maybe_unused struct dma_debug_item dbg_IMGO_R1[] = {
 	{0x000012C1, "imgo_r1_smi_port / plane-0 / maddr_min record"},
 };
 
-static __maybe_unused struct dma_debug_item dbg_AAHO_R1[] = {
-	{0x0000001D, "32(hex) 0000"},
-	{0x0000011D, "state_checksum"},
-	{0x0000021D, "line_pix_cnt_tmp"},
-	{0x0000031D, "line_pix_cnt"},
-	{0x0000041D, "important_status"},
-	{0x0000051D, "cmd_data_cnt"},
-	{0x0000061D, "cmd_cnt_for_bvalid_phase"},
-	{0x0000071D, "input_h_cnt"},
-	{0x0000081D, "input_v_cnt"},
-	{0x0000091D, "xfer_y_cnt"},
-
-	{0x0100005D, "aao_r1_smi_port_data_crc_p1"},
+static __maybe_unused struct dma_debug_item dbg_AEHO_R1[] = {
+	{0x0000002f, "32(hex) 0000"},
+	{0x0000012f, "state_checksum"},
+	{0x0000022f, "line_pix_cnt_tmp"},
+	{0x0000032f, "line_pix_cnt"},
+	{0x0000042f, "important_status"},
+	{0x0000052f, "cmd_data_cnt"},
+	{0x0000062f, "cmd_cnt_for_bvalid_phase"},
+	{0x0000072f, "input_h_cnt"},
+	{0x0000082f, "input_v_cnt"},
+	{0x0000092f, "xfer_y_cnt"},
+	{0x00000a2f, "pcrp_debug_data"},
+	{0x00000b2f, "sram_fifo_full"},
+	{0x00000c2f, "data_pre_cnt"},
 };
 
 static __maybe_unused struct dma_debug_item dbg_PDO_R1[] = {

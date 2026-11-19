@@ -3998,7 +3998,11 @@ u_int8_t wlanProcessTxFrame(struct ADAPTER *prAdapter, void *prPacket)
 #endif
 		}
 
-		ucMacHeaderLen = ETHER_HEADER_LEN;
+		if (IS_BSS_INDEX_WON(prAdapter,
+			GLUE_GET_PKT_BSS_IDX(prPacket)))
+			ucMacHeaderLen = kalQuery80211HeaderLength(prPacket);
+		else
+			ucMacHeaderLen = ETHER_HEADER_LEN;
 
 		/* Save the value of Header Length */
 		GLUE_SET_PKT_HEADER_LEN(prPacket, ucMacHeaderLen);
@@ -7472,6 +7476,14 @@ void wlanInitFeatureOptionImpl(struct ADAPTER *prAdapter, uint8_t *pucKey)
 	INIT_UINT(prWifiVar->ucStaUapsd, "StaUapsd", FEATURE_DISABLED);
 	INIT_UINT(prWifiVar->ucApUapsd, "ApUapsd", FEATURE_DISABLED);
 	INIT_UINT(prWifiVar->ucP2pUapsd, "P2pUapsd", FEATURE_ENABLED);
+#if CFG_SUPPORT_WONDERTAP
+	INIT_UINT(prWifiVar->u4RegWonIfAtProbe,
+		"RegWonIfAtProbe", FEATURE_ENABLED);
+	INIT_UINT(prWifiVar->ucRegWonMode,
+		"RegWonMode", 5);
+	INIT_UINT(prWifiVar->fgWonNoDisconnect,
+		"WonNoDisconnect", FEATURE_DISABLED);
+#endif
 #if (CFG_ENABLE_WIFI_DIRECT && CFG_MTK_ANDROID_WMT)
 	INIT_UINT(prWifiVar->u4RegP2pIfAtProbe,
 		"RegP2pIfAtProbe", FEATURE_ENABLED);
@@ -7638,6 +7650,11 @@ void wlanInitFeatureOptionImpl(struct ADAPTER *prAdapter, uint8_t *pucKey)
 	INIT_UINT(prWifiVar->ucAp2gBandwidth, "Ap2gBw", MAX_BW_20MHZ);
 	INIT_UINT(prWifiVar->ucAp5gBandwidth, "Ap5gBw", MAX_BW_80MHZ);
 	INIT_UINT(prWifiVar->ucAp6gBandwidth, "Ap6gBw", MAX_BW_320_1MHZ);
+#if CFG_SUPPORT_WONDERTAP
+	INIT_UINT(prWifiVar->ucWon2gBandwidth, "Won2gBw", MAX_BW_20MHZ);
+	INIT_UINT(prWifiVar->ucWon5gBandwidth, "Won5gBw", MAX_BW_80MHZ);
+	INIT_UINT(prWifiVar->ucWon6gBandwidth, "Won6gBw", MAX_BW_320_1MHZ);
+#endif
 	INIT_UINT(prWifiVar->ucApChnlDefFromCfg,
 		"ApChnlDefFromCfg", FEATURE_ENABLED);
 	INIT_UINT(prWifiVar->ucApAllowHtVhtTkip,
@@ -8100,6 +8117,13 @@ void wlanInitFeatureOptionImpl(struct ADAPTER *prAdapter, uint8_t *pucKey)
 	INIT_UINT(prWifiVar->u4MccBoostForAllTputLvTh,
 		"MccBoostForAllTputLvTh", MCC_BOOST_FOR_ALL_LEVEL);
 #endif /* CFG_SUPPORT_MCC_BOOST_CPU */
+
+#if CFG_SUPPORT_WONDERTAP
+	INIT_UINT(prWifiVar->u4WonBoostTputLvTh, "WonBoostTputLvTh",
+		  PERF_MON_WON_BOOST_CPU_THRESHOLD);
+	INIT_UINT(prWifiVar->u4WonBoostLevel, "WonBoostLevel",
+		  PERF_MON_TP_WON_LEVEL);
+#endif /* CFG_SUPPORT_WONDERTAP */
 
 	INIT_UINT(prWifiVar->u4NanBoostLevel, "NanBoostLevel",
 		  PERF_MON_TP_NAN_LEVEL);
@@ -14984,5 +15008,61 @@ int8_t hexDigitToInt(uint8_t ch)
 		return ch - '0';
 
 	return 0;
+}
+
+uint32_t
+wlanSetFixRate(struct ADAPTER *prAdapter,
+		      void *pvSetBuffer,
+		      uint32_t u4SetBufferLen,
+		      uint32_t *pu4SetInfoLen)
+{
+#ifdef CFG_SUPPORT_UNIFIED_COMMAND
+	uint32_t status = WLAN_STATUS_SUCCESS;
+	struct UNI_CMD_RA *uni_cmd;
+	struct UNI_CMD_RA_SET_FIXED_RATE *tag;
+	uint32_t max_cmd_len = sizeof(struct UNI_CMD_RA) +
+			       sizeof(struct UNI_CMD_RA_SET_FIXED_RATE) +
+			       sizeof(struct UNI_CMD_RA_SET_FIXED_RATE_V1);
+
+	ASSERT(prAdapter);
+	ASSERT(pu4SetInfoLen);
+
+	*pu4SetInfoLen = sizeof(struct UNI_CMD_RA_SET_FIXED_RATE_V1);
+	if (u4SetBufferLen < sizeof(struct UNI_CMD_RA_SET_FIXED_RATE_V1))
+		return WLAN_STATUS_INVALID_LENGTH;
+
+	ASSERT(pvSetBuffer);
+
+	uni_cmd = (struct UNI_CMD_RA *) cnmMemAlloc(prAdapter,
+				RAM_TYPE_MSG, max_cmd_len);
+	if (!uni_cmd) {
+		DBGLOG(INIT, ERROR,
+		       "Allocate UNI_CMD_BF ==> FAILED.\n");
+		return WLAN_STATUS_FAILURE;
+	}
+
+	tag = (struct UNI_CMD_RA_SET_FIXED_RATE *) uni_cmd->aucTlvBuffer;
+	tag->u2Tag = UNI_CMD_RA_TAG_SET_FIXED_RATE;
+	tag->u2Length = sizeof(*tag) +
+			sizeof(struct UNI_CMD_RA_SET_FIXED_RATE_V1);
+	tag->u2Version = UNI_CMD_RA_FIXED_RATE_VER1;
+	kalMemCopy(tag->aucBuffer, pvSetBuffer,
+		sizeof(struct UNI_CMD_RA_SET_FIXED_RATE_V1));
+
+	status = wlanSendSetQueryUniCmd(prAdapter,
+			     UNI_CMD_ID_RA,
+			     TRUE,
+			     FALSE,
+			     FALSE,
+			     nicUniCmdEventSetCommon,
+			     nicUniCmdTimeoutCommon,
+			     max_cmd_len,
+			     (void *)uni_cmd, NULL, 0);
+
+	cnmMemFree(prAdapter, uni_cmd);
+	return status;
+#else
+	return WLAN_STATUS_NOT_SUPPORTED;
+#endif
 }
 

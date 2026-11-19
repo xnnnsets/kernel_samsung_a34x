@@ -154,6 +154,10 @@ static uint8_t *apucDebugMsg[] = {
 #ifdef CFG_AP_GO_DELAY_CARRIER_ON
 	(uint8_t *) DISP_STRING("MID_MNY_P2P_NOTIFY_APGO_STARTED"),
 #endif /* CFG_AP_GO_DELAY_CARRIER_ON */
+#if CFG_SUPPORT_WONDERTAP
+	"MID_CNM_WON_CH_GRANT",
+	"MID_WON_DATA_MGMT_TX",
+#endif /* CFG_SUPPORT_WONDERTAP */
 };
 
 /*lint -restore */
@@ -348,6 +352,10 @@ static struct MSG_HNDL_ENTRY arMsgMapTable[] = {
 #ifdef CFG_AP_GO_DELAY_CARRIER_ON
 	{MID_MNY_P2P_NOTIFY_APGO_STARTED, p2pRoleFsmRunEventApGoStarted},
 #endif /* CFG_AP_GO_DELAY_CARRIER_ON */
+#if CFG_SUPPORT_WONDERTAP
+	{MID_CNM_WON_CH_GRANT, wonChGrant},
+	{MID_WON_DATA_MGMT_TX, wonTxDataMgmt},
+#endif /* CFG_SUPPORT_WONDERTAP */
 };
 
 /*******************************************************************************

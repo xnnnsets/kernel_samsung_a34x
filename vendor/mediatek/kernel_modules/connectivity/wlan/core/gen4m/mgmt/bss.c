@@ -43,6 +43,7 @@ const uint8_t *apucNetworkType[NETWORK_TYPE_NUM] = {
 	[NETWORK_TYPE_BOW] = (uint8_t *)"BOW",
 	[NETWORK_TYPE_MBSS] = (uint8_t *)"MBSS",
 	[NETWORK_TYPE_NAN] = (uint8_t *)"NAN",
+	[NETWORK_TYPE_WON] = (uint8_t *)"WON",
 };
 
 const uint8_t *apucNetworkOpMode[OP_MODE_NUM] = {
@@ -52,6 +53,7 @@ const uint8_t *apucNetworkOpMode[OP_MODE_NUM] = {
 	[OP_MODE_P2P_DEVICE] = (uint8_t *)"P2P_DEVICE",
 	[OP_MODE_BOW] = (uint8_t *)"BOW",
 	[OP_MODE_NAN] = (uint8_t *)"NAN",
+	[OP_MODE_WON] = (uint8_t *)"WON",
 };
 
 #if (CFG_SUPPORT_ADHOC) || (CFG_SUPPORT_AAA)
@@ -529,6 +531,8 @@ uint32_t bssInfoConnType(struct ADAPTER *ad, struct BSS_INFO *bssinfo)
 		}
 	} else if (bssinfo->eNetworkType == NETWORK_TYPE_NAN) {
 		return CONNECTION_NAN;
+	} else if (bssinfo->eNetworkType == NETWORK_TYPE_WON) {
+		return CONNECTION_WON;
 	}
 
 	return 0;
@@ -925,6 +929,10 @@ const char *bssGetRoleTypeString(struct ADAPTER *prAdapter,
 #endif
 	else if (IS_BSS_BOW(bss))
 		return "BOW";
+	else if (IS_BSS_NAN(bss))
+		return "NAN";
+	else if (IS_BSS_WON(bss))
+		return "WON";
 
 	return "Unknown";
 }
@@ -1627,6 +1635,22 @@ uint32_t bssProcessProbeRequest(struct ADAPTER *prAdapter,
 						   u4CtrlFlagsForProbeResp);
 			}
 		}
+#if CFG_SUPPORT_WONDERTAP
+		if (prAdapter->fgIsWONRegistered &&
+			prAdapter->fgIsWONRunning &&
+			(prBssInfo->eNetworkType == NETWORK_TYPE_WON)) {
+#if CFG_WONDERTAP_TX_RX_DEBUG
+			DBGLOG(WON, INFO,
+				"bss%u rx probe req packet\n",
+				prBssInfo->ucBssIndex);
+#endif
+
+			wonRxIndicateOnePkt(prAdapter,
+				prSwRfb, prBssInfo->ucBssIndex);
+
+			return WLAN_STATUS_PENDING;
+		}
+#endif
 	}
 
 	return WLAN_STATUS_SUCCESS;

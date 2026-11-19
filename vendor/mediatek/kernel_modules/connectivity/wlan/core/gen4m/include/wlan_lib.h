@@ -286,6 +286,12 @@ struct TPENHANCE_PKT_MAP {
 #define WLAN_DRV_READY_CHECK_WLAN_ON       BIT(0)
 #define WLAN_DRV_READY_CHECK_HIF_SUSPEND   BIT(1)
 #define WLAN_DRV_READY_CHECK_RESET         BIT(2)
+#define WLAN_DRV_READY_CHECK_FAST_ON_OFF   BIT(3)
+#define WLAN_DRV_READY_CHECK_ALL \
+	(WLAN_DRV_READY_CHECK_WLAN_ON | \
+	WLAN_DRV_READY_CHECK_HIF_SUSPEND | \
+	WLAN_DRV_READY_CHECK_RESET | \
+	WLAN_DRV_READY_CHECK_FAST_ON_OFF)
 
 #define MAX_CMD_ITEM_MAX		4	/* Max item per cmd. */
 #define MAX_CMD_NAME_MAX_LENGTH		32	/* Max name string length */
@@ -1368,7 +1374,8 @@ enum ENUM_MAX_BANDWIDTH_SETTING {
 	MAX_BW_80_80_MHZ,
 	MAX_BW_320_1MHZ,
 	MAX_BW_320_2MHZ,
-	MAX_BW_UNKNOWN
+	MAX_BW_UNKNOWN,
+	MAX_BW_NUM = MAX_BW_UNKNOWN
 };
 
 struct TX_PACKET_INFO {
@@ -2391,5 +2398,10 @@ int8_t hexDigitToInt(uint8_t ch);
 
 int wlanChipConfigWithType(struct ADAPTER *prAdapter,
 	char *pcCommand, int i4TotalLen, uint8_t type);
+
+uint32_t wlanSetFixRate(struct ADAPTER *prAdapter,
+		      void *pvSetBuffer,
+		      uint32_t u4SetBufferLen,
+		      uint32_t *pu4SetInfoLen);
 
 #endif /* _WLAN_LIB_H */

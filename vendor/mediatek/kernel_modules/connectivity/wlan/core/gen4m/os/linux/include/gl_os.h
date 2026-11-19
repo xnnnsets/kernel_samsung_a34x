@@ -837,6 +837,10 @@ struct GLUE_INFO {
 	struct GL_BOW_INFO rBowInfo;
 #endif
 
+#if CFG_SUPPORT_WONDERTAP
+	struct GL_WON_DEV_INFO *prWONDevInfo;
+	struct GL_WON_INFO *prWONInfo[KAL_WON_NUM];
+#endif
 #if CFG_ENABLE_WIFI_DIRECT
 	struct GL_P2P_DEV_INFO *prP2PDevInfo;
 	struct GL_P2P_INFO *prP2PInfo[KAL_P2P_NUM];
@@ -905,6 +909,9 @@ struct GLUE_INFO {
 #if CFG_MET_PACKET_TRACE_SUPPORT
 	u_int8_t fgMetProfilingEn;
 	uint16_t u2MetUdpPort;
+#endif
+#if CFG_ENABLE_WAKE_LOCK && CFG_SUPPORT_WONDERTAP
+	KAL_WAKE_LOCK_T *prWonWakeLock;
 #endif
 
 #if WLAN_INCLUDE_SYS
@@ -1055,6 +1062,10 @@ struct GLUE_INFO {
 	uint32_t u4HifRegStartCnt;
 	uint32_t u4HifRegReqCnt;
 #endif /* CFG_SUPPORT_HIF_REG_WORK */
+
+	struct wireless_dev *prWonWdev[KAL_WON_NUM];
+	struct wireless_dev *prWonRoleWdev[KAL_WON_NUM];
+	struct net_device *prWonDev[KAL_WON_NUM];
 };
 
 typedef irqreturn_t(*PFN_WLANISR) (int irq, void *dev_id,
@@ -1178,6 +1189,7 @@ struct NETDEV_PRIVATE_GLUE_INFO {
 #if CFG_SUPPORT_NAN
 	unsigned char ucIsNan;
 #endif
+	u_int8_t ucIsWondertap;
 };
 
 struct PACKET_PRIVATE_DATA {

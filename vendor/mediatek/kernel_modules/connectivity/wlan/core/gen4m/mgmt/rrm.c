@@ -2320,9 +2320,19 @@ void rrmCollectBeaconReport(struct ADAPTER *prAdapter,
 		}
 	/* If channel number is 0, use op class to check */
 	} else if (bcnReq->ucChannel == 0) {
-		struct RF_CHANNEL_INFO
-			aucChannelList[MAX_PER_BAND_CHN_NUM] = {0};
+		struct RF_CHANNEL_INFO *aucChannelList = NULL;
 		u_int8_t ucChannelListNum = 0;
+
+		aucChannelList = kalMemAlloc(
+			sizeof(struct RF_CHANNEL_INFO) * MAX_PER_BAND_CHN_NUM,
+			VIR_MEM_TYPE);
+		if (!aucChannelList) {
+			DBGLOG(RRM, ERROR,
+			       "Alloc channel list failed, No Memory\n");
+			return;
+		}
+		kalMemZero(aucChannelList,
+			sizeof(struct RF_CHANNEL_INFO) * MAX_PER_BAND_CHN_NUM);
 
 		rlmDomainGetChnlListFromOpClass(prAdapter,
 			bcnReq->ucRegulatoryClass,
@@ -2343,6 +2353,9 @@ void rrmCollectBeaconReport(struct ADAPTER *prAdapter,
 				}
 			}
 		}
+
+		kalMemFree(aucChannelList, VIR_MEM_TYPE,
+			sizeof(struct RF_CHANNEL_INFO) * MAX_PER_BAND_CHN_NUM);
 	}
 	if (!validChannel) {
 		DBGLOG(RRM, INFO, ""MACSTR" chnl %d invalid, req %d\n",

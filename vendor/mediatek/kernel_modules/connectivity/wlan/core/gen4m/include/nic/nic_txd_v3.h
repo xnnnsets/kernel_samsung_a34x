@@ -39,6 +39,7 @@ uint8_t nic_txd_v3_queue_idx_op(
 	uint8_t fgSet);
 #if (CFG_TCP_IP_CHKSUM_OFFLOAD == 1)
 void nic_txd_v3_chksum_op(
+	struct ADAPTER *prAdapter,
 	void *prTxDesc,
 	uint8_t ucChksumFlag,
 	struct MSDU_INFO *prMsduInfo);

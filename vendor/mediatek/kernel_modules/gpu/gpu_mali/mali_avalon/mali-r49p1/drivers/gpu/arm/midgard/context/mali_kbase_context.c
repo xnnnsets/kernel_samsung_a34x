@@ -224,6 +224,10 @@ int kbase_context_common_init(struct kbase_context *kctx)
 	if (kctx->kbdev->mem_whitebox_debug == true)
 		dev_err(kctx->kbdev->dev, "[pid:%d] kbase_create_context", kctx->tgid);
 #endif /* CONFIG_MALI_MTK_WHITEBOX_MEMORY_FOOTPRINT */
+
+#if IS_ENABLED(CONFIG_MALI_MTK_DEBUG_DUMP)
+	mutex_init(&kctx->dump_queue_lock);
+#endif /* CONFIG_MALI_MTK_DEBUG_DUMP */
 	mutex_lock(&kctx->kbdev->kctx_list_lock);
 	err = kbase_insert_kctx_to_process(kctx);
 	mutex_unlock(&kctx->kbdev->kctx_list_lock);

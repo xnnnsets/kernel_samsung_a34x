@@ -328,6 +328,14 @@ static void radiotap_fill_he(
 		(p_radiotap_info->u2Txop << IEEE80211_RADIOTAP_HE_TXOP_SHFT));
 }
 
+static void radiotap_fill_tsft(
+	struct IEEE80211_RADIOTAP_INFO *p_radiotap_info, uint8_t *p_data)
+{
+	struct TSFT *p_tsft = (struct TSFT *)p_data;
+
+	p_tsft->u8MacTime = (uint64_t)p_radiotap_info->u4Timestamp;
+}
+
 static void radiotap_fill_timestamp(
 	struct IEEE80211_RADIOTAP_INFO *p_radiotap_info, uint8_t *p_data)
 {
@@ -588,6 +596,19 @@ void radiotapFillRadiotap(struct ADAPTER *prAdapter,
 		present0 = IEEE80211_RADIOTAP_FIELD_PRESENT_NON_LEGACY;
 		present = IEEE80211_RADIOTAP_FIELD_VENDOR;
 		break;
+	}
+
+	/* Bit Number 0 FLAGS */
+	if (present0 & IEEE80211_RADIOTAP_FIELD_TSFT) {
+		/* Required Alignment 8 bytes */
+		padding_len = ((radiotap_len % 8) == 0) ?
+			0 : (8 - (radiotap_len % 8));
+		radiotap_len += padding_len;
+		radiotap_fill_func[func_num].offset = radiotap_len;
+		radiotap_fill_func[func_num].radiotap_fill_func =
+			radiotap_fill_tsft;
+		radiotap_len += sizeof(struct TSFT);
+		func_num++;
 	}
 
 	/* Bit Number 1 FLAGS */

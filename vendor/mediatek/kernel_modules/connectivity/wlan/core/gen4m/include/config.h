@@ -2315,6 +2315,38 @@
 #define CFG_SUPPORT_AVOID_DESENSE 0
 #endif
 
+#ifndef CFG_SUPPORT_WONDERTAP
+#define CFG_SUPPORT_WONDERTAP 1
+#endif
+
+#ifndef CFG_WONDERTAP_TX_RX_DEBUG
+#define CFG_WONDERTAP_TX_RX_DEBUG 0
+#endif
+
+#ifndef CFG_SUPPORT_WONDERTAP_RX_BYPASS
+#define CFG_SUPPORT_WONDERTAP_RX_BYPASS 0
+#endif
+
+#ifndef CFG_SUPPORT_WON_DBDC
+#define CFG_SUPPORT_WON_DBDC 0
+#endif
+
+#ifndef CFG_SUPPORT_WON_11AX
+#define CFG_SUPPORT_WON_11AX 0
+#endif
+
+#ifndef CFG_SUPPORT_WON_11BE
+#define CFG_SUPPORT_WON_11BE 0
+#endif
+
+#ifndef CFG_SUPPORT_WON_HW
+#define CFG_SUPPORT_WON_HW 1
+#endif
+
+#ifndef CFG_SUPPORT_WON_11BE_MLO
+#define CFG_SUPPORT_WON_11BE_MLO 0
+#endif
+
 /*------------------------------------------------------------------------------
  * Suppoot to get DPD Cache
  *------------------------------------------------------------------------------

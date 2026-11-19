@@ -434,6 +434,7 @@ enum ENUM_NETWORK_TYPE {
 	NETWORK_TYPE_BOW,
 	NETWORK_TYPE_MBSS,
 	NETWORK_TYPE_NAN,
+	NETWORK_TYPE_WON,
 	NETWORK_TYPE_NUM
 };
 
@@ -444,6 +445,9 @@ enum ENUM_STA_TYPE_INDEX {
 	STA_TYPE_BOW_INDEX,
 #if CFG_SUPPORT_NAN
 	STA_TYPE_NAN_INDEX,
+#endif
+#if CFG_SUPPORT_WONDERTAP
+	STA_TYPE_WON_INDEX,
 #endif
 	STA_TYPE_INDEX_NUM
 };
@@ -883,6 +887,7 @@ enum ENUM_OP_MODE {
 	OP_MODE_P2P_DEVICE,	/* P2P Device */
 	OP_MODE_BOW,
 	OP_MODE_NAN,
+	OP_MODE_WON,
 	OP_MODE_NUM
 };
 
@@ -1260,6 +1265,9 @@ enum ENUM_PARAM_NAN_MODE_T {
 #if CFG_SUPPORT_NAN
 #define STA_TYPE_NAN_MASK                   BIT(STA_TYPE_NAN_INDEX)
 #endif
+#if CFG_SUPPORT_WONDERTAP
+#define STA_TYPE_WON_MASK                   BIT(STA_TYPE_WON_INDEX)
+#endif
 
 /* Macros for obtaining the Network Type
  * or the Station Role, given the ENUM_STA_TYPE_T
@@ -1288,6 +1296,9 @@ enum ENUM_PARAM_NAN_MODE_T {
 	((_prStaRec->eStaType) & STA_TYPE_DLS_MASK)
 #if CFG_SUPPORT_NAN
 #define IS_STA_NAN_TYPE(_prStaRec) ((_prStaRec->eStaType) & STA_TYPE_NAN_MASK)
+#endif
+#if CFG_SUPPORT_WONDERTAP
+#define IS_STA_WON_TYPE(_prStaRec) ((_prStaRec->eStaType) & STA_TYPE_WON_MASK)
 #endif
 
 /* The ENUM_STA_TYPE_T accounts for
@@ -1321,6 +1332,9 @@ enum ENUM_STA_TYPE {
 	STA_TYPE_DLS_PEER = (STA_TYPE_LEGACY_MASK | STA_TYPE_DLS_MASK),
 #if CFG_SUPPORT_NAN
 	STA_TYPE_NAN = (STA_TYPE_NAN_MASK),
+#endif
+#if CFG_SUPPORT_WONDERTAP
+	STA_TYPE_WON = (STA_TYPE_WON_MASK),
 #endif
 };
 

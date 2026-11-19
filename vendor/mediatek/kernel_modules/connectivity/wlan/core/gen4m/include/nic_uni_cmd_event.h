@@ -854,6 +854,7 @@ enum ENUM_UNI_CMD_STAREC_TAG {
 	UNI_CMD_STAREC_TAG_REMOVE		= 0x25,
 	UNI_CMD_STAREC_TAG_GET_PN		= 0x26,
 	UNI_CMD_STAREC_TAG_INSTALL_KEY_V3	= 0x27,
+	UNI_CMD_STAREC_TAG_HDR_TRANS		= 0x2B,
 	UNI_CMD_STAREC_TAG_FAST_ALL		= 0x2C,
 	UNI_CMD_STAREC_TAG_MLR_INFO		= 0x2D,
 	UNI_CMD_STAREC_TAG_NAN			= 0x2E,
@@ -1174,6 +1175,17 @@ struct UNI_CMD_STAREC_INSTALL_KEY3 {
 	uint8_t       ucMgmtProtection;
 	uint8_t       aucKeyMaterial[32];
 	uint8_t       aucKeyRsc[16];
+} __KAL_ATTRIB_PACKED__;
+
+/* Disable RX header translation (Tag = 0x2b) */
+__KAL_ATTRIB_PACKED_FRONT__
+struct UNI_CMD_STAREC_HDR_TRANS {
+	uint16_t u2Tag;       /* Tag = 0x2b */
+	uint16_t u2Length;
+	uint8_t ucFromDs;
+	uint8_t ucToDs;
+	uint8_t ucDisRxHdrTran;
+	uint8_t aucReserved[1];
 } __KAL_ATTRIB_PACKED__;
 
 /* MLR information (Tag 0x2d) */

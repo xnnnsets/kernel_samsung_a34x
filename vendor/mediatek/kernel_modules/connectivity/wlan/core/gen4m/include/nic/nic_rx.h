@@ -1727,6 +1727,9 @@ void nicRxIndicateRfbMainToNapi(struct ADAPTER *ad);
 
 void nicRxParseDropPkt(struct SW_RFB *prSwRfb);
 
+u_int8_t nicRxHandleWonPkt(struct ADAPTER *prAdapter,
+	struct SW_RFB *prSwRfb);
+
 void nicRxProcessDataPacket(struct ADAPTER *prAdapter,
 	struct SW_RFB *prSwRfb);
 

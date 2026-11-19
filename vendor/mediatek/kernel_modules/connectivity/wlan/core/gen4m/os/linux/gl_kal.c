@@ -1130,6 +1130,84 @@ void *kalPacketAlloc(struct GLUE_INFO *prGlueInfo,
 	return (void *) prSkb;
 }
 
+uint8_t kalQuery80211HeaderLength(void *pvPacket)
+{
+	struct sk_buff *skb = (struct sk_buff *)pvPacket;
+	uint16_t u2FrameCtrl;
+	uint8_t ucMacLen = 0;
+
+	if (!skb || skb->len < sizeof(uint16_t))
+		return 0;
+
+	/* 802.11 Frame Control is always Little Endian */
+	u2FrameCtrl = skb->data[0] | (skb->data[1] << 8);
+
+	switch (u2FrameCtrl & MASK_FC_TYPE) {
+	case MAC_FRAME_TYPE_MGT:
+		ucMacLen = WLAN_MAC_MGMT_HEADER_LEN;
+		break;
+
+	case MAC_FRAME_TYPE_CTRL:
+		switch (u2FrameCtrl & MASK_FRAME_TYPE) {
+		case MAC_FRAME_PS_POLL:
+		case MAC_FRAME_RTS:
+		case MAC_FRAME_BLOCK_ACK_REQ:
+		case MAC_FRAME_BLOCK_ACK:
+			ucMacLen = PSPOLL_FRAME_LEN;
+			break;
+		case MAC_FRAME_CTS:
+		case MAC_FRAME_ACK:
+			ucMacLen = WLAN_MAC_CTS_ACK_HEADER_LEN;
+			break;
+		case MAC_FRAME_CF_END:
+		case MAC_FRAME_CF_END_CF_ACK:
+			ucMacLen = WLAN_MAC_CF_END_HEADER_LEN;
+			break;
+		default:
+			ucMacLen = WLAN_MAC_CTS_ACK_HEADER_LEN;
+			break;
+		}
+		break;
+
+	case MAC_FRAME_TYPE_DATA:
+		ucMacLen = WLAN_MAC_HEADER_LEN;
+
+		/* Address 4: ToDS and FromDS both set (WDS) */
+		if ((u2FrameCtrl & MASK_TO_DS_FROM_DS) == MASK_TO_DS_FROM_DS)
+			ucMacLen += MAC_ADDR_LEN;
+
+		/* QoS Control: Data type and Subtype bit 3 (bit 7 of FC) set */
+		if (u2FrameCtrl & MASK_FC_SUBTYPE_QOS_DATA)
+			ucMacLen += QOS_CTRL_LEN;
+		break;
+
+	default:
+		return 0;
+	}
+
+	/* HT Control: "Order" bit set - applicable to Mgmt and Data frames */
+	if ((u2FrameCtrl & MASK_FC_TYPE) != MAC_FRAME_TYPE_CTRL &&
+	    (u2FrameCtrl & MASK_FC_ORDER)) {
+		ucMacLen += HT_CTRL_LEN;
+	}
+
+	/* Boundary check: calculated length cannot exceed actual
+	 *                 captured bytes
+	 */
+	if (ucMacLen > skb->len)
+		ucMacLen = (uint8_t)skb->len;
+
+#if CFG_WONDERTAP_TX_RX_DEBUG
+	DBGLOG(INIT, DEBUG, "Calculated MacLenRet:%u Type:%u Subtype:%u\n",
+		ucMacLen,
+		(uint8_t)((u2FrameCtrl & MASK_FC_TYPE) >> 2),
+		(uint8_t)((u2FrameCtrl & MASK_FC_SUBTYPE) >>
+			OFFSET_OF_FC_SUBTYPE));
+#endif /* CFG_WONDERTAP_TX_RX_DEBUG */
+
+	return ucMacLen;
+}
+
 /*----------------------------------------------------------------------------*/
 /*!
  * \brief Only handles driver own creating packet (coalescing buffer).
@@ -1992,10 +2070,10 @@ uint32_t kalRxIndicateOnePkt(struct GLUE_INFO
 	}
 	if (!prNetDev)
 		prNetDev = prGlueInfo->prDevHandler;
-
-	DBGLOG(RX, LOUD, "ucBssIdx:%u, netdev:0x%p, name:%s\n",
+#if CFG_WONDERTAP_TX_RX_DEBUG
+	DBGLOG(WON, INFO, "ucBssIdx:%u, netdev:0x%p, name:%s\n",
 		ucBssIdx, prNetDev, prNetDev->name);
-
+#endif
 	if (prNetDev->dev_addr == NULL) {
 		DBGLOG(RX, WARN, "dev_addr == NULL\n");
 		return WLAN_STATUS_FAILURE;
@@ -2022,7 +2100,8 @@ uint32_t kalRxIndicateOnePkt(struct GLUE_INFO
 #endif
 
 #ifdef CFG_SUPPORT_SNIFFER_RADIOTAP
-	if (prGlueInfo->fgIsEnableMon) {
+	if (prGlueInfo->fgIsEnableMon ||
+		IS_BSS_INDEX_WON(prGlueInfo->prAdapter, ucBssIdx)) {
 		skb_reset_mac_header(prSkb);
 		prSkb->ip_summed = CHECKSUM_UNNECESSARY;
 		prSkb->pkt_type = PACKET_OTHERHOST;
@@ -11060,6 +11139,34 @@ u_int8_t kalIsMccBoost(struct ADAPTER *prAdapter)
 }
 #endif /* CFG_SUPPORT_MCC_BOOST_CPU */
 
+#if (CFG_SUPPORT_WONDERTAP == 1)
+void kalWonBoostCheck(struct ADAPTER *prAdapter, uint32_t u4TputLv)
+{
+	u_int8_t fgWonBoost = FALSE;
+
+	if (!prAdapter->fgIsWONRunning)
+		goto end;
+
+	if (u4TputLv >= prAdapter->rWifiVar.u4WonBoostTputLvTh)
+		fgWonBoost = TRUE;
+
+end:
+	prAdapter->fgWonStateChange =
+		(prAdapter->fgWonBoost != fgWonBoost) ? TRUE : FALSE;
+	prAdapter->fgWonBoost = fgWonBoost;
+}
+
+u_int8_t kalIsWonStateChange(struct ADAPTER *prAdapter)
+{
+	return prAdapter->fgWonStateChange;
+}
+
+u_int8_t __weak kalIsWonBoost(struct ADAPTER *prAdapter)
+{
+	return FALSE;
+}
+#endif /* CFG_SUPPORT_WONDERTAP */
+
 void kalPerMonHandler(struct ADAPTER *prAdapter,
 		      unsigned long ulParam)
 {
@@ -11181,6 +11288,9 @@ void kalPerMonHandler(struct ADAPTER *prAdapter,
 #if CFG_SUPPORT_MCC_BOOST_CPU
 		kalMccBoostCheck(prAdapter, u4CurrTputLv);
 #endif /* CFG_SUPPORT_MCC_BOOST_CPU */
+#if (CFG_SUPPORT_WONDERTAP == 1)
+		kalWonBoostCheck(prAdapter, u4CurrTputLv);
+#endif /* CFG_SUPPORT_WONDERTAP */
 
 		if (kalCheckTputLoad(prAdapter,
 			u4PrevTputLv,
@@ -11209,6 +11319,9 @@ void kalPerMonHandler(struct ADAPTER *prAdapter,
 #endif /* CFG_SUPPORT_MCC_BOOST_CPU */
 			|| prAdapter->rPerMonitor.u4NanBoostCpu
 			|| prAdapter->rPerMonitor.fgNanBoostCpuOff
+#if (CFG_SUPPORT_WONDERTAP == 1)
+			|| kalIsWonStateChange(prAdapter)
+#endif /* CFG_SUPPORT_WONDERTAP */
 			) && (u4BoostCpuTh < PERF_MON_TP_MAX_THRESHOLD)) {
 			uint32_t u4SetTarPerfLevel;
 			uint32_t u4SetBoostCpuTh;
@@ -11234,13 +11347,18 @@ void kalPerMonHandler(struct ADAPTER *prAdapter,
 					prWifiVar->u4NanBoostLevel;
 			}
 
+#if (CFG_SUPPORT_WONDERTAP == 1)
+			if (kalIsWonBoost(prAdapter)) {
+				u4SetTarPerfLevel = u4SetBoostCpuTh =
+					prWifiVar->u4WonBoostLevel;
+			}
+#endif /* CFG_SUPPORT_WONDERTAP */
 #if CFG_SUPPORT_MCC_BOOST_CPU
 			if (kalIsMccBoost(prAdapter)) {
 				u4SetTarPerfLevel = u4SetBoostCpuTh =
 					PERF_MON_TP_MAX_THRESHOLD - 1;
 			}
 #endif /* CFG_SUPPORT_MCC_BOOST_CPU */
-
 			DBGLOG(SW4, INFO, "kalBoostCpu(%u, %u)\n",
 				    u4SetTarPerfLevel, u4SetBoostCpuTh);
 			kalBoostCpu(prAdapter,

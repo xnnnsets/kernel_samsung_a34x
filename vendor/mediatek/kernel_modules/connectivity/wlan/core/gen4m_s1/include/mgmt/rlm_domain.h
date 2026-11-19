@@ -1373,4 +1373,9 @@ char *rlmDomainGetSarScenarioName(enum ENUM_SAR_TYPE eType);
  */
 
 uint8_t regCountryDfsMapping(IN struct ADAPTER *prAdapter);
+
+u_int8_t rlmDomainIsIndoorBw20(struct ADAPTER *prAdapter,
+				 enum ENUM_BAND eBand, uint8_t ucChannel);
+
+u_int8_t rlmDomainIsStaSapIndoorConn(struct ADAPTER *prAdapter);
 #endif /* _RLM_DOMAIN_H */

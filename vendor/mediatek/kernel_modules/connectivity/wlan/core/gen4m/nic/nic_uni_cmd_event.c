@@ -2487,6 +2487,13 @@ uint32_t nicUniCmdBssInfoTagBasic(struct ADAPTER *ad,
 	tag->ucPhyMode = phy_mode & 0xff;
 	tag->ucPhyModeExt = (phy_mode >> 8) & 0xff;
 
+#if CFG_SUPPORT_WONDERTAP
+#if CFG_WONDERTAP_TRACE
+	DBGLOG(WON, INFO, "u2StaRecIdxOfAP=%u cmd->starec=%u",
+		tag->u2StaRecIdxOfAP, cmd->ucStaRecIdxOfAP);
+#endif
+#endif
+
 	return tag->u2Length;
 }
 
@@ -3797,6 +3804,10 @@ uint32_t nicUniCmdStaRecConnType(struct ADAPTER *ad, uint32_t legacy_sta_type)
 	else if (legacy_sta_type == STA_TYPE_NAN)
 		return CONNECTION_NAN;
 #endif
+#if CFG_SUPPORT_WONDERTAP
+	else if (legacy_sta_type == STA_TYPE_WON)
+		return CONNECTION_WON;
+#endif
 
 	DBGLOG(NIC, ERROR, "wrong sta_type=%d\n", legacy_sta_type);
 	return CONNECTION_INFRA_STA;
@@ -4373,6 +4384,41 @@ uint32_t nicUniCmdStaRecTagNan(struct ADAPTER *ad,
 }
 #endif
 
+uint32_t nicUniCmdStaRecTagHdrTrans(struct ADAPTER *ad,
+	uint8_t *buf, struct CMD_UPDATE_STA_RECORD *cmd)
+{
+	struct STA_RECORD *prStaRec =
+		cnmGetStaRecByIndex(ad, cmd->ucStaIndex);
+	struct UNI_CMD_STAREC_HDR_TRANS *tag =
+		(struct UNI_CMD_STAREC_HDR_TRANS *)buf;
+
+	if (!prStaRec) {
+		DBGLOG(REQ, WARN,
+			"Hdr Trans unicmd - prStaRec is NULL\n");
+		return 0;
+	}
+
+	if (!IS_BSS_INDEX_WON(ad, prStaRec->ucBssIndex)) {
+		DBGLOG(REQ, TRACE,
+			"Hdr Trans unicmd - Skip\n");
+		return 0;
+	}
+
+	tag->u2Tag = UNI_CMD_STAREC_TAG_HDR_TRANS;
+	tag->u2Length = sizeof(struct UNI_CMD_STAREC_HDR_TRANS);
+
+	tag->ucFromDs = 0;
+	tag->ucToDs = 0;
+	tag->ucDisRxHdrTran = 1;
+
+	DBGLOG(REQ, INFO,
+		"Hdr Trans unicmd - StaRec[%u] WIDX[%u] DisRxHdrTran[%u]\n",
+		cmd->ucStaIndex,
+		cmd->ucWlanIndex,
+		tag->ucDisRxHdrTran);
+
+	return tag->u2Length;
+}
 
 struct UNI_CMD_STAREC_TAG_HANDLE arUpdateStaRecTable[] = {
 	{sizeof(struct UNI_CMD_STAREC_BASIC), nicUniCmdStaRecTagBasic},
@@ -4400,6 +4446,7 @@ struct UNI_CMD_STAREC_TAG_HANDLE arUpdateStaRecTable[] = {
 	 sizeof(struct UNI_CMD_STAREC_LINK_INFO) * UNI_MLD_LINK_MAX,
 	 nicUniCmdStaRecTagMldSetup},
 #endif
+	{sizeof(struct UNI_CMD_STAREC_HDR_TRANS), nicUniCmdStaRecTagHdrTrans},
 #if (CFG_SUPPORT_MLR == 1)
 	{sizeof(struct UNI_CMD_STAREC_MLR_INFO), nicUniCmdStaRecTagMlrInfo},
 #endif

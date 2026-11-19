@@ -347,6 +347,10 @@ static char *g_sarScenarioName[SAR_NUM] = {
 	"SAR_NR_SUB6_BAND_INFO_78"
 };
 
+static const uint16_t g_u2IndoorBw20[] = {
+	COUNTRY_CODE_ID,
+};
+
 static uint32_t g_u4SarActBitMap;
 static uint32_t g_u4SarBitMap;
 /*******************************************************************************
@@ -1167,6 +1171,26 @@ u_int8_t rlmDomainIsLegalChannel(struct ADAPTER *prAdapter,
 						return TRUE;
 
 				}
+			}
+		}
+	}
+
+	return FALSE;
+}
+
+u_int8_t rlmDomainIsIndoorBw20(struct ADAPTER *prAdapter,
+				 enum ENUM_BAND eBand, uint8_t ucChannel)
+{
+	if (eBand == BAND_5G) {
+		uint32_t u4CountryNum = 0;
+		uint8_t i;
+
+		if (ucChannel >= 149 && ucChannel <= 165) {
+			u4CountryNum = ARRAY_SIZE(g_u2IndoorBw20);
+			for (i = 0; i < u4CountryNum; i++) {
+				if (g_u2IndoorBw20[i] ==
+				prAdapter->rWifiVar.u2CountryCode)
+				return TRUE;
 			}
 		}
 	}

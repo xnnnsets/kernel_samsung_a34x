@@ -39,7 +39,10 @@ void mtk_debug_csf_dump_cpu_queues(struct kbase_device *kbdev, struct kbase_cont
         put_pid(pid_struct);
     }
 
-    mutex_lock(&kctx->csf.lock);
+    if (!mtk_debug_trylock(&kctx->csf.lock)) {
+        mtk_log_critical_exception(kbdev, true, "%s<%d> lock csf.lock failed!", __func__, __LINE__);
+        return;
+    }
 #if IS_ENABLED(CONFIG_MALI_MTK_CPUQ_DUMP_ENHANCEMENT)
     mutex_lock(&kctx->csf.cpu_queue.lock);
 #endif /* CONFIG_MALI_MTK_CPUQ_DUMP_ENHANCEMENT*/
@@ -97,7 +100,22 @@ void mtk_debug_csf_dump_cpu_queues(struct kbase_device *kbdev, struct kbase_cont
                 break;
         }
 
-        mutex_lock(&kctx->csf.lock);
+        if (!mtk_debug_trylock(&kctx->csf.lock)) {
+            mtk_log_critical_exception(kbdev, true, "%s<%d> lock csf.lock failed!", __func__, __LINE__);
+#if IS_ENABLED(CONFIG_MALI_MTK_CPUQ_DUMP_ENHANCEMENT)
+            mutex_lock(&kctx->csf.cpu_queue.lock);
+#endif /* CONFIG_MALI_MTK_CPUQ_DUMP_ENHANCEMENT*/
+            if (kctx->csf.cpu_queue.buffer) {
+                kfree(kctx->csf.cpu_queue.buffer);
+                kctx->csf.cpu_queue.buffer = NULL;
+                kctx->csf.cpu_queue.buffer_size = 0;
+          	}
+#if IS_ENABLED(CONFIG_MALI_MTK_CPUQ_DUMP_ENHANCEMENT)
+            mutex_unlock(&kctx->csf.cpu_queue.lock);
+#endif /* CONFIG_MALI_MTK_CPUQ_DUMP_ENHANCEMENT*/
+            atomic_set(&kctx->csf.cpu_queue.dump_req_status, BASE_CSF_CPU_QUEUE_DUMP_COMPLETE);
+            return;
+  	}
 #if IS_ENABLED(CONFIG_MALI_MTK_CPUQ_DUMP_ENHANCEMENT)
         mutex_lock(&kctx->csf.cpu_queue.lock);
 #endif /* CONFIG_MALI_MTK_CPUQ_DUMP_ENHANCEMENT*/

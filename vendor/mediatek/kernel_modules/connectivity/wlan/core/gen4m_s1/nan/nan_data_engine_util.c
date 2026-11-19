@@ -727,6 +727,12 @@ nanNdpeAttrUpdateNdp(struct ADAPTER *prAdapter,
 			DBGLOG(NAN, WARN,
 			       "NDP Response: Being REJECTed, reason = %d\n",
 			       prAttrNDPE->ucReasonCode);
+			prNDP->ucNDPSetupStatus =
+				NAN_ATTR_NDP_STATUS_REJECTED;
+			prNDP->ucReasonCode =
+				prAttrNDPE->ucReasonCode ?
+				prAttrNDPE->ucReasonCode :
+				NAN_REASON_CODE_NDP_REJECTED;
 			return WLAN_STATUS_FAILURE;
 		}
 

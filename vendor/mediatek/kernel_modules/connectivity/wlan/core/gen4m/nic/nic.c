@@ -2688,6 +2688,12 @@ uint32_t nicUpdateBssEx(struct ADAPTER *prAdapter,
 					     ENUM_ENCRYPTION3_KEY_ABSENT;
 	}
 #endif
+#if CFG_SUPPORT_WONDERTAP
+	else if (IS_BSS_WON(prBssInfo)) {
+		rCmdSetBssInfo.ucAuthMode = (uint8_t) AUTH_MODE_OPEN;
+		rCmdSetBssInfo.ucEncStatus = (uint8_t) ENUM_ENCRYPTION_DISABLED;
+	}
+#endif
 	else {
 #if CFG_ENABLE_WIFI_DIRECT
 		if (prAdapter->fgIsP2PRegistered) {
@@ -2808,6 +2814,15 @@ uint32_t nicUpdateBssEx(struct ADAPTER *prAdapter,
 		 && prBssInfo->prStaRecOfAP != NULL) {
 		rCmdSetBssInfo.ucStaRecIdxOfAP =
 			prBssInfo->prStaRecOfAP->ucIndex;
+	}
+#endif
+#if CFG_SUPPORT_WONDERTAP
+	else if (IS_BSS_WON(prBssInfo)) {
+		if (prBssInfo->prStaRecOfAP)
+			rCmdSetBssInfo.ucStaRecIdxOfAP =
+				prBssInfo->prStaRecOfAP->ucIndex;
+		else
+			DBGLOG(WON, TRACE, "prStaRecOfAP NULL\n");
 	}
 #endif
 	else

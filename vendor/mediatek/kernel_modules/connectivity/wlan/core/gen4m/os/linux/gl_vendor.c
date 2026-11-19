@@ -4036,8 +4036,6 @@ uint32_t wlanoidSetLatency(
 	 *		   due to low RSSI.
 	 * Mode 3: Restrict off channel time due to full scan to < 40ms
 	 */
-	ais->ucLatencyMode = *pu4Mode;
-
 
 #if (CFG_EXT_FEATURE == 0)
 	if (ais->ucLatencyMode == WIFI_LATENCY_MODE_SCAN_ON)
@@ -4055,9 +4053,11 @@ uint32_t wlanoidSetLatency(
 		ais->u2OpChStayTimeMs = 0;
 		ais->ucPerScanChannelCnt = 0;
 	}
+
 	DBGLOG(REQ, INFO,
-		"Latency Mode[%d],(dfs,non-dfs,Op,PerCh)=(%d,%d,%d,%d)\n",
+		"Latency Mode[%d][%d],(dfs,non-dfs,Op,PerCh)=(%d,%d,%d,%d)\n",
 		ais->ucLatencyMode,
+		ais->ucLatencyWifiMode,
 		ais->ucDfsChDwellTimeMs,
 		ais->ucNonDfsChDwellTimeMs,
 		ais->u2OpChStayTimeMs,
@@ -4105,6 +4105,19 @@ int mtk_cfg80211_vendor_set_latency_mode(
 	DBGLOG(REQ, INFO,
 		"Set_latency_Mode=%d,Current=%d\n",
 		u4Mode, ais->ucLatencyMode);
+
+	/* Check whether current latency mode is in higher level */
+	ais->ucLatencyWifiMode = u4Mode;
+	ais->ucLatencyMode =
+		ais->ucLatencyWifiMode > ais->ucLatencyCrtDataMode ?
+		ais->ucLatencyWifiMode : ais->ucLatencyCrtDataMode;
+
+	if (ais->ucLatencyMode != ais->ucLatencyWifiMode) {
+		DBGLOG(INIT, INFO,
+			"Latency Mode didn't change[%d][%d]!\n",
+			ais->ucLatencyMode, ais->ucLatencyWifiMode);
+		goto exit;
+	}
 
 	/* Do further scan handling for mode 2 and mode 3,
 	 * reset if u4Mode == 0

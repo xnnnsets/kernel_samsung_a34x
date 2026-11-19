@@ -2136,6 +2136,10 @@ struct kbase_context {
 	struct kbase_reg_zone reg_zone[CONTEXT_ZONE_MAX];
 
 #if MALI_USE_CSF
+#if IS_ENABLED(CONFIG_MALI_MTK_DEBUG_DUMP)
+	struct mutex dump_queue_lock;
+#endif /* CONFIG_MALI_MTK_DEBUG_DUMP */
+
 	struct kbase_csf_context csf;
 #else
 	struct kbase_jd_context jctx;

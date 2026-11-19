@@ -9205,6 +9205,7 @@ void kalRemoveBufferLog(struct ADAPTER *prAdapter,
 	struct BUFFERED_LOG_ENTRY *entry)
 {
 	struct LINK *list;
+	KAL_SPIN_LOCK_DECLARATION();
 
 	if (prAdapter == NULL)
 		return;
@@ -9219,8 +9220,10 @@ void kalRemoveBufferLog(struct ADAPTER *prAdapter,
 	DBGLOG(AIS, WARN, "Remove bss[%d] sn[%d]\n",
 		entry->ucBssIdx, entry->ucSn);
 
+	KAL_ACQUIRE_SPIN_LOCK(prAdapter, SPIN_LOCK_BUFFERED_LOG);
 	LINK_REMOVE_KNOWN_ENTRY(list, &entry->rLinkEntry);
-	kalMemFree(entry, VIR_MEM_TYPE, sizeof(struct BUFFERED_LOG_ENTRY));
+	KAL_RELEASE_SPIN_LOCK(prAdapter, SPIN_LOCK_BUFFERED_LOG);
+	kfree(entry);
 }
 
 struct BUFFERED_LOG_ENTRY *kalGetBufferLog(struct ADAPTER *prAdapter,
@@ -9229,6 +9232,9 @@ struct BUFFERED_LOG_ENTRY *kalGetBufferLog(struct ADAPTER *prAdapter,
 	struct LINK *list;
 	struct BUFFERED_LOG_ENTRY *entry = NULL;
 
+	struct BUFFERED_LOG_ENTRY *found = NULL;
+	KAL_SPIN_LOCK_DECLARATION();
+
 	if (prAdapter == NULL)
 		return NULL;
 
@@ -9242,21 +9248,27 @@ struct BUFFERED_LOG_ENTRY *kalGetBufferLog(struct ADAPTER *prAdapter,
 	if (ucBssIndex >= KAL_BSS_NUM)
 		return NULL;
 
+	KAL_ACQUIRE_SPIN_LOCK(prAdapter, SPIN_LOCK_BUFFERED_LOG);
 	LINK_FOR_EACH_ENTRY(entry, list, rLinkEntry, struct BUFFERED_LOG_ENTRY)
 	{
 		if (entry->ucSn == ucSn && entry->ucBssIdx == ucBssIndex) {
-			DBGLOG(AIS, WARN, "Found bss[%d] sn[%d]\n",
-				ucBssIndex, ucSn);
-			return entry;
+			found = entry;
+			break;
 		}
 	}
 
-	return NULL;
+	KAL_RELEASE_SPIN_LOCK(prAdapter, SPIN_LOCK_BUFFERED_LOG);
+
+	if (found)
+		DBGLOG(AIS, WARN, "Found bss[%d] sn[%d]\n", ucBssIndex, ucSn);
+
+	return found;
 }
 
 void kalClearBufferLog(struct ADAPTER *prAdapter) {
 	struct LINK *list;
 	struct BUFFERED_LOG_ENTRY *entry = NULL;
+	KAL_SPIN_LOCK_DECLARATION();
 
 	if (prAdapter == NULL)
 		return;
@@ -9265,12 +9277,17 @@ void kalClearBufferLog(struct ADAPTER *prAdapter) {
 	if (LINK_IS_INVALID(list))
 		return;
 
-	while (!LINK_IS_EMPTY(list)) {
+	while (TRUE) {
+		KAL_ACQUIRE_SPIN_LOCK(prAdapter, SPIN_LOCK_BUFFERED_LOG);
+		if (LINK_IS_EMPTY(list)) {
+			LINK_INITIALIZE(list);
+			KAL_RELEASE_SPIN_LOCK(prAdapter, SPIN_LOCK_BUFFERED_LOG);
+			break;
+		}
 		LINK_REMOVE_HEAD(list, entry, struct BUFFERED_LOG_ENTRY *);
-		kalMemFree(entry, VIR_MEM_TYPE,
-			sizeof(struct BUFFERED_LOG_ENTRY));
+		KAL_RELEASE_SPIN_LOCK(prAdapter, SPIN_LOCK_BUFFERED_LOG);
+		kfree(entry);
 	}
-	LINK_INITIALIZE(list);
 }
 
 void kalBufferWifiLog(struct ADAPTER *prAdapter, uint8_t ucBssIndex,
@@ -9278,6 +9295,7 @@ void kalBufferWifiLog(struct ADAPTER *prAdapter, uint8_t ucBssIndex,
 {
 	struct LINK *list;
 	struct BUFFERED_LOG_ENTRY *prLogEntry;
+	KAL_SPIN_LOCK_DECLARATION();
 
 	if (prAdapter == NULL)
 		return;
@@ -9292,8 +9310,7 @@ void kalBufferWifiLog(struct ADAPTER *prAdapter, uint8_t ucBssIndex,
 	if (ucBssIndex >= KAL_BSS_NUM)
 		return;
 
-	prLogEntry = kalMemAlloc(sizeof(struct BUFFERED_LOG_ENTRY),
-		VIR_MEM_TYPE);
+	prLogEntry = kmalloc(sizeof(*prLogEntry), GFP_ATOMIC);
 
 	if (!prLogEntry) {
 		DBGLOG(AIS, WARN, "no resource for buffered log\n");
@@ -9305,7 +9322,10 @@ void kalBufferWifiLog(struct ADAPTER *prAdapter, uint8_t ucBssIndex,
 	prLogEntry->fgBuffered = TRUE;
 	prLogEntry->ucBssIdx = ucBssIndex;
 	kalMemCopy(prLogEntry->aucLog, log, sizeof(prLogEntry->aucLog));
+
+	KAL_ACQUIRE_SPIN_LOCK(prAdapter, SPIN_LOCK_BUFFERED_LOG);
 	LINK_INSERT_TAIL(list, &prLogEntry->rLinkEntry);
+	KAL_RELEASE_SPIN_LOCK(prAdapter, SPIN_LOCK_BUFFERED_LOG);
 }
 
 void kalReportWifiLog(struct ADAPTER *prAdapter, uint8_t ucBssIndex,

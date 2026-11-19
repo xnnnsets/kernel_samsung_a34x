@@ -33,6 +33,9 @@
 /* Retry interval for retransmiting association-request MMPDU. */
 #define TX_ASSOCIATION_RETRY_TIMEOUT_TU             100	/* TU. */
 
+/* Retry interval for external authentication */
+#define EXTERNAL_AUTHENTICATION_TIMEOUT_TU	1500	/* TU */
+
 /* Wait for a response to a transmitted authentication-request MMPDU. */
 #define DOT11_AUTHENTICATION_RESPONSE_TIMEOUT_TU    512/* TU. */
 #if CFG_MTK_FPGA_PLATFORM

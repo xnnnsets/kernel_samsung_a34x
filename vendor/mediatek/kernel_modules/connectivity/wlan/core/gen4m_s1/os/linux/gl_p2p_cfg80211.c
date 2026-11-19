@@ -399,6 +399,21 @@ struct wireless_dev *mtk_p2p_cfg80211_add_iface(struct wiphy *wiphy,
 		prP2pInfo->prWdev = prWdev;
 
 		/* 4.2 fill hardware address */
+		if (prAdapter->rWifiVar.ucP2pShareMacAddr &&
+		    (type == NL80211_IFTYPE_P2P_CLIENT ||
+		     type == NL80211_IFTYPE_P2P_GO)) {
+			COPY_MAC_ADDR(rMacAddr,
+				prAdapter->rWifiVar.aucDeviceAddress);
+		} else {
+			COPY_MAC_ADDR(rMacAddr, prAdapter->rMyMacAddr);
+			/* change to local administrated address */
+			rMacAddr[0] |= 0x2;
+			if (u4Idx > 0)
+				rMacAddr[0] ^= u4Idx << 2;
+			else
+				rMacAddr[0] ^=
+					prAdapter->prP2pInfo->u4DeviceNum << 2;
+		}
 #if (KERNEL_VERSION(5, 16, 0) <= CFG80211_VERSION_CODE)
 		eth_hw_addr_set(prNewNetDevice, rMacAddr);
 #else

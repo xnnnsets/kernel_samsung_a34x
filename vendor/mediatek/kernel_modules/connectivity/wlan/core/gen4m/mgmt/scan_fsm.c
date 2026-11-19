@@ -2459,16 +2459,20 @@ scnFsmNotifyEvent(struct ADAPTER *prAdapter,
 		uint8_t ucBssIndex)
 {
 	struct SCAN_INFO *prScanInfo;
-	char uEvent[300], strbuf[200] = "N/A";
+	char *uEvent = (char *)kalMemAlloc(
+			SCN_SCAN_DONE_PRINT_BUFFER_LENGTH, VIR_MEM_TYPE);
+	char *strbuf = (char *)kalMemAlloc(
+			SCN_SCAN_DONE_PRINT_BUFFER_LENGTH, VIR_MEM_TYPE);
 	uint8_t fgIsScanNormal = TRUE, fgIsDbdcScan = TRUE;
-	uint8_t i, ucReasonInd = 0, ucWritten = 0;
-	uint8_t ucTotalLen = 200;
+	uint8_t i = 0, ucReasonInd = 0, ucWritten = 0;
 	uint8_t *apucScnReason[3] = {
 		(uint8_t *) DISP_STRING("OK"),
 		(uint8_t *) DISP_STRING("TIMEOUT"),
 		(uint8_t *) DISP_STRING("DRIVER ABORT"),
 	};
 	uint32_t u4ScanTime = 0;
+	kalMemZero(uEvent, SCN_SCAN_DONE_PRINT_BUFFER_LENGTH);
+	kalMemZero(strbuf, SCN_SCAN_DONE_PRINT_BUFFER_LENGTH);
 
 	/*
 	 * Status: NORMAL, ABNORMAL (scan timeout or driver abort scan both
@@ -2499,11 +2503,11 @@ scnFsmNotifyEvent(struct ADAPTER *prAdapter,
 		ucReasonInd = SCN_DONE_OK;
 		for (i = 0; i < prScanInfo->ucSparseChannelArrayValidNum; i++) {
 			ucWritten += kalSnprintf(strbuf + ucWritten,
-					ucTotalLen - ucWritten, "%d ",
-					prScanInfo->aucChannelNum[i]);
+			SCN_SCAN_DONE_PRINT_BUFFER_LENGTH - ucWritten, "%d ",
+			prScanInfo->aucChannelNum[i]);
 		}
 	}
-	kalSnprintf(uEvent, sizeof(uEvent),
+	kalSnprintf(uEvent, SCN_SCAN_DONE_PRINT_BUFFER_LENGTH,
 		"Scan=Status:%s,DBDC:%s,Time:%d,Channel:%s,Reason:%s",
 		(fgIsScanNormal ? "NORMAL" : "ABNORMAL"),
 		(fgIsDbdcScan ? "ENABLE" : "DISABLE"),
@@ -2512,7 +2516,18 @@ scnFsmNotifyEvent(struct ADAPTER *prAdapter,
 		apucScnReason[ucReasonInd]);
 
 	DBGLOG(SCN, LOUD, "request uevent:%s\n", uEvent);
+
 	/* Only send Uevent if BSS is AIS */
 	if (IS_BSS_INDEX_AIS(prAdapter, ucBssIndex))
 		kalSendUevent(uEvent);
+
+	if (uEvent) {
+		kalMemFree(uEvent, VIR_MEM_TYPE,
+		SCN_SCAN_OOB_PRINT_BUFFER_LENGTH);
+	}
+
+	if (strbuf) {
+		kalMemFree(strbuf, VIR_MEM_TYPE,
+		SCN_SCAN_OOB_PRINT_BUFFER_LENGTH);
+	}
 }

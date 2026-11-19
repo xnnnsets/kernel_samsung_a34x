@@ -298,6 +298,9 @@
 /* HTC included */
 #define WLAN_MAC_MGMT_HEADER_HTC_LEN            28
 
+#define WLAN_MAC_CTS_ACK_HEADER_LEN             10
+#define WLAN_MAC_CF_END_HEADER_LEN              20
+
 #define QOS_CTRL_LEN                            2
 #define HT_CTRL_LEN                             4
 
@@ -5288,9 +5291,23 @@ struct WLAN_DEAUTH_FRAME_WITH_MIC {
 	((_pucIpAddr)[0] || (_pucIpAddr)[1] || \
 	 (_pucIpAddr)[2] || (_pucIpAddr)[3])
 
+/* The macro to check if the MAC address is Broadcast Address */
+#define IS_BCAST_MAC_ADDR(_pucDestAddr) \
+	((u_int8_t) (((uint8_t *)(_pucDestAddr))[0] == 0xff && \
+	((uint8_t *)(_pucDestAddr))[1] == 0xff && \
+	((uint8_t *)(_pucDestAddr))[2] == 0xff && \
+	((uint8_t *)(_pucDestAddr))[3] == 0xff && \
+	((uint8_t *)(_pucDestAddr))[4] == 0xff && \
+	((uint8_t *)(_pucDestAddr))[5] == 0xff))
+
 /* The macro to check if the MAC address is B/MCAST Address */
 #define IS_BMCAST_MAC_ADDR(_pucDestAddr)            \
 	((u_int8_t) (((uint8_t *)(_pucDestAddr))[0] & BIT(0)))
+
+/* The macro to check if the MAC address is Multicast Address */
+#define IS_MCAST_MAC_ADDR(_pucDestAddr)         \
+	((u_int8_t) (IS_BMCAST_MAC_ADDR(_pucDestAddr) && \
+	!IS_BCAST_MAC_ADDR(_pucDestAddr)))
 
 /* The macro to check if the MAC address is UCAST Address */
 #define IS_UCAST_MAC_ADDR(_pucDestAddr)             \

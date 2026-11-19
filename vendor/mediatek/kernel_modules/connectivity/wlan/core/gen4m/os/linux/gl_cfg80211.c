@@ -1062,6 +1062,10 @@ int mtk_cfg80211_scan(struct wiphy *wiphy,
 		return -EINVAL;
 	}
 
+	if (!wlanIsDriverReady(prGlueInfo, WLAN_DRV_READY_CHECK_WLAN_ON |
+	    WLAN_DRV_READY_CHECK_RESET))
+		return -EBUSY;
+
 #ifdef CFG_SUPPORT_SNIFFER_RADIOTAP
 	if (prGlueInfo->fgIsEnableMon)
 		return -EINVAL;
@@ -8427,6 +8431,17 @@ int mtk_cfg_disconnect(struct wiphy *wiphy,
 		DBGLOG(REQ, WARN, "driver is not ready\n");
 		return -EFAULT;
 	}
+
+#if CFG_SUPPORT_WONDERTAP
+	if (prGlueInfo->prAdapter->rWifiVar.fgWonNoDisconnect) {
+		DBGLOG(REQ, WARN,
+			"WON started, skip disconnect, return busy\n");
+		return -EBUSY;
+	}
+#else
+	DBGLOG(REQ, WARN, "SKIP_DISCONNECT CFG not set.\n");
+#endif
+
 #if CFG_ENABLE_WIFI_DIRECT && CFG_ENABLE_WIFI_DIRECT_CFG_80211
 	if (mtk_IsP2PNetDevice(prGlueInfo, ndev) > 0)
 		return mtk_p2p_cfg80211_disconnect(wiphy, ndev,

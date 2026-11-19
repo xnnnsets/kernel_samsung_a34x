@@ -2857,6 +2857,15 @@ uint8_t roamingFsmScheduleNextSearch(struct ADAPTER *prAdapter,
 	if (!prRoamingInfo)
 		return TRUE;
 
+	/* Already do full scan */
+	if (!prAisFsmInfo->fgTargetChnlScanIssued)
+		return FALSE;
+
+#if (CFG_SUPPORT_LLW_SCAN == 1)
+	if (prAisFsmInfo->ucLatencyMode == WIFI_LATENCY_MODE_ROAM)
+		return FALSE;
+#endif /* (CFG_SUPPORT_LLW_SCAN == 1) */
+
 	/* If meet the conditions, do the full scan */
 	if (prRoamingInfo->eReason == ROAMING_REASON_POOR_RCPI ||
 	    prRoamingInfo->eReason == ROAMING_REASON_HIGH_CU) {
@@ -2872,10 +2881,6 @@ uint8_t roamingFsmScheduleNextSearch(struct ADAPTER *prAdapter,
 	    prRoamingInfo->eReason == ROAMING_REASON_INACTIVE_TIMER ||
 	    prRoamingInfo->eReason == ROAMING_REASON_IDLE ||
 	    prRoamingInfo->eReason == ROAMING_REASON_BT_COEX)
-		return FALSE;
-
-	/* Already do full scan */
-	if (!prAisFsmInfo->fgTargetChnlScanIssued)
 		return FALSE;
 
 	return TRUE;

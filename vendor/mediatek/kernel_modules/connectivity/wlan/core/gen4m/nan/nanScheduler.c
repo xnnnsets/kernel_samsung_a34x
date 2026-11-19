@@ -5386,6 +5386,15 @@ nanGetSubBandByChannelEntry(struct _NAN_AVAILABILITY_ENTRY_T *prAvailEntry,
 		if (*pucBand == NAN_SUPPORTED_BAND_ID_6G)
 			ucSupportedBands |= BIT(ENUM_SUPPORTED_BN_6G);
 #endif
+
+		DBGLOG(NAN, TRACE,
+		       "%c availability %s, band info=0x%02x, support 6G/5GH/5GL/2G=%u/%u/%u/%u",
+		       nanChnlTypeStr(prAvailEntry),
+		       "Band", *pucBand,
+		       !!(ucSupportedBands & BIT(ENUM_SUPPORTED_BN_6G)),
+		       !!(ucSupportedBands & BIT(ENUM_SUPPORTED_BN_5G_HIGH)),
+		       !!(ucSupportedBands & BIT(ENUM_SUPPORTED_BN_5G_LOW)),
+		       !!(ucSupportedBands & BIT(ENUM_SUPPORTED_BN_2G)));
 	} else { /* prChnlList->ucType == NAN_BAND_CH_ENTRY_LIST_TYPE_CHNL */
 		prChnlEntry = pEntry;
 #if (CFG_SUPPORT_NAN_6G == 1)
@@ -5409,17 +5418,19 @@ nanGetSubBandByChannelEntry(struct _NAN_AVAILABILITY_ENTRY_T *prAvailEntry,
 				ucSupportedBands |=
 					BIT(ENUM_SUPPORTED_BN_5G_HIGH);
 		}
-	}
 
-	DBGLOG(NAN, TRACE,
-	       "%c availability %s support 6G/5GH/5GL/2G=%u/%u/%u/%u",
-	       nanChnlTypeStr(prAvailEntry),
-	       prChnlList->ucType == NAN_BAND_CH_ENTRY_LIST_TYPE_BAND ?
-	       "Band" : "Channel",
-	       !!(ucSupportedBands & BIT(ENUM_SUPPORTED_BN_6G)),
-	       !!(ucSupportedBands & BIT(ENUM_SUPPORTED_BN_5G_HIGH)),
-	       !!(ucSupportedBands & BIT(ENUM_SUPPORTED_BN_5G_LOW)),
-	       !!(ucSupportedBands & BIT(ENUM_SUPPORTED_BN_2G)));
+		DBGLOG(NAN, TRACE,
+		       "%c availability %s, channel info:OC=%u ch_map=0x%04x pri_map=0x%02x support 6G/5GH/5GL/2G=%u/%u/%u/%u",
+		       nanChnlTypeStr(prAvailEntry),
+		       "Channel",
+		       prChnlEntry->ucOperatingClass,
+		       prChnlEntry->u2ChannelBitmap,
+		       prChnlEntry->ucPrimaryChnlBitmap,
+		       !!(ucSupportedBands & BIT(ENUM_SUPPORTED_BN_6G)),
+		       !!(ucSupportedBands & BIT(ENUM_SUPPORTED_BN_5G_HIGH)),
+		       !!(ucSupportedBands & BIT(ENUM_SUPPORTED_BN_5G_LOW)),
+		       !!(ucSupportedBands & BIT(ENUM_SUPPORTED_BN_2G)));
+	}
 
 	return ucSupportedBands;
 }

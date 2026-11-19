@@ -1825,6 +1825,8 @@ static int kbasep_ioctl_set_limited_core_count(
 }
 
 #if IS_ENABLED(CONFIG_MALI_MTK_FENCE_DEBUG)
+__attribute__((unused)) extern int mtk_debug_trylock(struct mutex *lock);
+
 static int kbasep_ioctl_internal_fence_wait(struct kbase_context *kctx,
 			struct kbase_ioctl_internal_fence_wait *fence_wait)
 {
@@ -1859,19 +1861,32 @@ static int kbasep_ioctl_internal_fence_wait(struct kbase_context *kctx,
 #endif /* CONFIG_MALI_MTK_LOG_BUFFER */
 		if (fence_wait->flags & BASE_INTERNAL_FENCE_WAIT_DUMP_FLAG) {
 #if IS_ENABLED(CONFIG_MALI_MTK_DEBUG_DUMP)
-			struct kbase_context *kctx_pid;
+			struct kbase_context *kctx_target;
+			bool is_target;
 			mtk_common_debug(MTK_COMMON_DBG_DUMP_INFRA_STATUS, kctx, MTK_DBG_HOOK_FENCE_INTERNAL_TIMEOUT);
 			mtk_common_debug(MTK_COMMON_DBG_DUMP_PM_STATUS, kctx, MTK_DBG_HOOK_FENCE_INTERNAL_TIMEOUT);
 			mtk_common_debug(MTK_COMMON_DBG_DUMP_DB_BY_SETTING, kctx, MTK_DBG_HOOK_FENCE_INTERNAL_TIMEOUT);
+			is_target = false;
 			if (kctx->tgid != (int)fence_wait->pid) {
-				list_for_each_entry(kctx_pid, &kctx->kbdev->kctx_list, kctx_list_link) {
-					if (kctx_pid->tgid == (int)fence_wait->pid) {
-						mtk_common_debug(MTK_COMMON_DBG_CSF_DUMP_GROUPS_QUEUES, kctx_pid, MTK_DBG_HOOK_FENCE_INTERNAL_TIMEOUT);
+				if (!mtk_debug_trylock(&kctx->kbdev->kctx_list_lock)) {
+					mtk_logbuffer_type_print(kctx->kbdev, MTK_LOGBUFFER_TYPE_CRITICAL | MTK_LOGBUFFER_TYPE_EXCEPTION,
+						"%s<%d> lock kctx_list_lock failed!", __func__, __LINE__);
+					return 0;
+				}
+				list_for_each_entry(kctx_target, &kctx->kbdev->kctx_list, kctx_list_link) {
+					if (kctx_target->tgid == (int)fence_wait->pid) {
+						is_target = true;
 						break;
 					}
 				}
-			} else
-				mtk_common_debug(MTK_COMMON_DBG_CSF_DUMP_GROUPS_QUEUES, kctx, MTK_DBG_HOOK_FENCE_INTERNAL_TIMEOUT);
+				mutex_unlock(&kctx->kbdev->kctx_list_lock);
+			} else {
+				kctx_target = kctx;
+				is_target = true;
+			}
+			if (true == is_target) {
+				mtk_common_debug(MTK_COMMON_DBG_CSF_DUMP_GROUPS_QUEUES, kctx_target, MTK_DBG_HOOK_FENCE_INTERNAL_TIMEOUT);
+			}
 #endif /* CONFIG_MALI_MTK_DEBUG_DUMP */
 		}
 	}

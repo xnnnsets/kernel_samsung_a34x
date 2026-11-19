@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0 WITH Linux-syscall-note
 /*
  *
- * (C) COPYRIGHT 2010-2025 ARM Limited. All rights reserved.
+ * (C) COPYRIGHT 2010-2026 ARM Limited. All rights reserved.
  *
  * This program is free software and is provided to you under the terms of the
  * GNU General Public License version 2 as published by the Free Software
@@ -4165,7 +4165,7 @@ static int mmu_migrate_pgd_sub_page(struct kbase_mmu_table *mmut, phys_addr_t ol
 		/* Defer the migration as L2 is in a transitional phase */
 		spin_unlock_irqrestore(&kbdev->hwaccess_lock, hwaccess_flags);
 		mutex_unlock(&kbdev->mmu_hw_mutex);
-		dev_dbg(kbdev->dev, "%s: L2 in transtion, abort PGD page migration", __func__);
+		dev_dbg(kbdev->dev, "%s: L2 in transition, abort PGD page migration", __func__);
 		ret = -EAGAIN;
 		goto l2_state_defer_out;
 	}
@@ -4309,6 +4309,11 @@ int kbase_mmu_migrate_pgd_page(struct tagged_addr old_pgd_phys, struct tagged_ad
 
 	check_state = PAGE_STATUS_GET(page_md->status);
 
+	if (check_state == FREE_PT_ISOLATED_IN_PROGRESS) {
+		ret = -EAGAIN;
+		goto early_exit;
+	}
+
 	if (WARN_ONCE(check_state != PT_MAPPED,
 		      "Page metadata status %d doesn't match expected value %d", check_state,
 		      PT_MAPPED)) {
@@ -4354,9 +4359,11 @@ int kbase_mmu_migrate_pgd_page(struct tagged_addr old_pgd_phys, struct tagged_ad
 		goto metadata_unlock;
 	}
 
+	spin_unlock(&page_md->migrate_lock);
+
 	if (kbase_mem_is_pmode_deferral_required(kbdev)) {
 		ret = -EAGAIN;
-		goto metadata_unlock;
+		goto mmu_unlock;
 	}
 
 	spin_unlock(&page_md->migrate_lock);
@@ -4432,6 +4439,7 @@ int kbase_mmu_migrate_pgd_page(struct tagged_addr old_pgd_phys, struct tagged_ad
 		spin_unlock_irqrestore(&kbdev->hwaccess_lock, hwaccess_flags);
 	}
 
+mmu_unlock:
 	mutex_unlock(&mmut->mmu_lock);
 	return ret;
 
@@ -4471,6 +4479,12 @@ int kbase_mmu_migrate_data_page(struct tagged_addr old_phys, struct tagged_addr 
 
 	check_state = PAGE_STATUS_GET(page_md->status);
 
+	if (check_state == FREE_ISOLATED_IN_PROGRESS) {
+		/* tear down in progress, abort for progressing to release the page  */
+		ret = -EAGAIN;
+		goto early_exit;
+	}
+
 	if (WARN_ONCE(check_state != ALLOCATED_MAPPED,
 		      "Page metadata status %d doesn't match expected value %d", check_state,
 		      ALLOCATED_MAPPED)) {
@@ -4479,7 +4493,6 @@ int kbase_mmu_migrate_data_page(struct tagged_addr old_phys, struct tagged_addr 
 	}
 
 	mmut = page_md->data.mapped.mmut;
-	vpfn = page_md->data.mapped.vpfn;
 
 	spin_unlock(&page_md->migrate_lock);
 
@@ -4489,6 +4502,7 @@ int kbase_mmu_migrate_data_page(struct tagged_addr old_phys, struct tagged_addr 
 	if (!mmut->kctx)
 		return -EINVAL;
 
+	vpfn = page_md->data.mapped.vpfn;
 	kbdev = mmut->kctx->kbdev;
 	index = vpfn & 0x1FFU;
 

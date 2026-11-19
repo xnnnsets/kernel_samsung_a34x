@@ -4527,6 +4527,10 @@ static void wlanCreateWirelessDevice(void)
 	prWiphy->ap_sme_capa = 1;
 #endif /* CFG_ENABLE_WIFI_DIRECT */
 
+#if CFG_SUPPORT_WONDERTAP
+	prWiphy->interface_modes |= BIT(NL80211_IFTYPE_MONITOR);
+#endif
+
 #if CFG_ENABLE_OFFCHANNEL_TX
 	prWiphy->flags |= WIPHY_FLAG_OFFCHAN_TX;
 #endif /* CFG_ENABLE_OFFCHANNEL_TX */
@@ -4590,6 +4594,10 @@ static void wlanDestroyAllWdev(void)
 
 	WIPHY_PRIV(wlanGetWiphy(), prGlueInfo);
 	kalMemFree(prGlueInfo, VIR_MEM_TYPE, sizeof(struct GLUE_INFO));
+
+#if CFG_SUPPORT_WONDERTAP
+	wlanDestroyWonWdev(prGlueInfo);
+#endif
 
 #if CFG_ENABLE_WIFI_DIRECT
 	/* free P2P wdev */
@@ -4670,6 +4678,9 @@ void wlanWakeLockInit(struct GLUE_INFO *prGlueInfo)
 	KAL_WAKE_LOCK_INIT(NULL, prGlueInfo->rDrvOwnWakeLock,
 			   "WLAN Drv Own");
 #endif
+#if CFG_SUPPORT_WONDERTAP
+	KAL_WAKE_LOCK_INIT(NULL, prGlueInfo->prWonWakeLock, "WLAN_WONDER");
+#endif
 #endif
 }
 
@@ -4696,6 +4707,11 @@ void wlanWakeLockUninit(struct GLUE_INFO *prGlueInfo)
 				 prGlueInfo->rDrvOwnWakeLock))
 		KAL_WAKE_UNLOCK(NULL, prGlueInfo->rDrvOwnWakeLock);
 	KAL_WAKE_LOCK_DESTROY(NULL, prGlueInfo->rDrvOwnWakeLock);
+#endif
+#if CFG_SUPPORT_WONDERTAP
+	if (KAL_WAKE_LOCK_ACTIVE(NULL, prGlueInfo->prWonWakeLock))
+		KAL_WAKE_UNLOCK(NULL, prGlueInfo->prWonWakeLock);
+	KAL_WAKE_LOCK_DESTROY(NULL, prGlueInfo->prWonWakeLock);
 #endif
 #endif
 }
@@ -7427,6 +7443,15 @@ int32_t wlanOnWhenProbeSuccess(struct GLUE_INFO *prGlueInfo,
 #else
 	wlanOnP2pRegistration(prGlueInfo, prAdapter, gprWdev[0], FALSE);
 #endif
+#if (CFG_SUPPORT_WONDERTAP == 1)
+#if (CFG_TESTMODE_FWDL_SUPPORT == 1)
+	wlanOnWondertapReg(prGlueInfo, prAdapter, gprWdev[0],
+		g_fgWlanOnOffHoldRtnlLock);
+#else
+	wlanOnWondertapReg(prGlueInfo, prAdapter, gprWdev[0],
+		FALSE);
+#endif
+#endif
 	halSetSuspendFlagToFw(prAdapter, FALSE);
 #if CFG_MODIFY_TX_POWER_BY_BAT_VOLT
 	if (wlan_bat_volt == 3550) {
@@ -8640,6 +8665,24 @@ static void wlanRemove(void)
 	}
 #endif
 
+#if CFG_SUPPORT_WONDERTAP
+	if (prGlueInfo->prAdapter->fgIsWONRegistered) {
+		DBGLOG(INIT, INFO, "wonNetUnregister...\n");
+#if (CFG_TESTMODE_FWDL_SUPPORT == 1)
+		wonNetUnregister(prGlueInfo, g_fgWlanOnOffHoldRtnlLock, FALSE);
+#else
+		wonNetUnregister(prGlueInfo, FALSE, FALSE);
+#endif
+		DBGLOG(INIT, INFO, "wonRemove...\n");
+		/*wonRemove must before wlanAdapterStop */
+#if (CFG_TESTMODE_FWDL_SUPPORT == 1)
+		wonRemove(prGlueInfo, g_fgWlanOnOffHoldRtnlLock);
+#else
+		wonRemove(prGlueInfo, FALSE);
+#endif
+	}
+#endif
+
 #if CFG_SUPPORT_NAN
 	if (prGlueInfo->prAdapter->fgIsNANRegistered) {
 		DBGLOG(INIT, INFO, "NANNetUnregister...\n");
@@ -8934,6 +8977,10 @@ static int initWlan(void)
 #if CFG_ENABLE_WIFI_DIRECT
 	if (gprWdev[0])
 		glP2pCreateWirelessDevice(prGlueInfo);
+#endif
+#if CFG_SUPPORT_WONDERTAP
+	if (gprWdev[0])
+		glWonCreateWirelessDevice(prGlueInfo);
 #endif
 	gPrDev = NULL;
 
@@ -9434,6 +9481,13 @@ struct net_device *wlanGetNetDev(struct GLUE_INFO *prGlueInfo,
 #if CFG_SUPPORT_NAN
 		prNetDevice = wlanGetNetInterfaceByBssIdx(prGlueInfo,
 							  ucBssIndex);
+#endif
+	} else if (IS_BSS_WON(prBssInfo) && ucBssIndex < MAX_BSSID_NUM) {
+#if CFG_SUPPORT_WONDERTAP
+		if (prAdapter->rWONNetRegState ==
+			ENUM_NET_REG_STATE_REGISTERED)
+			prNetDevice = wlanGetNetInterfaceByBssIdx(prGlueInfo,
+								  ucBssIndex);
 #endif
 	}
 

@@ -50,6 +50,9 @@ static uint8_t *apucStaRecType[STA_TYPE_INDEX_NUM] = {
 #if CFG_SUPPORT_NAN
 	(uint8_t *) "NAN",
 #endif
+#if CFG_SUPPORT_WONDERTAP
+	(uint8_t *) "WON",
+#endif
 };
 
 static uint8_t *apucStaRecRole[STA_ROLE_INDEX_NUM] = {
@@ -1239,6 +1242,16 @@ void cnmStaSendUpdateCmd(struct ADAPTER *prAdapter, struct STA_RECORD *prStaRec,
 	/* AMSDU in AMPDU global configuration */
 	prCmdContent->ucTxAmsduInAmpdu = prAdapter->rWifiVar.ucAmsduInAmpduTx;
 	prCmdContent->ucRxAmsduInAmpdu = prAdapter->rWifiVar.ucAmsduInAmpduRx;
+#if CFG_SUPPORT_WONDERTAP
+#if !CFG_SUPPORT_WON_HW
+	if (IS_STA_WON_TYPE(prStaRec)) {
+		prCmdContent->ucTxAmsduInAmpdu = 0;
+		prCmdContent->ucRxAmsduInAmpdu = 0;
+		prCmdContent->ucTxAmpdu = 0;
+		prCmdContent->ucRxAmpdu = 0;
+	}
+#endif
+#endif
 
 #if (CFG_SUPPORT_802_11BE == 1)
 	if (prStaRec->ucDesiredPhyTypeSet & PHY_TYPE_SET_802_11BE) {

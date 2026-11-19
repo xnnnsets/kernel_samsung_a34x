@@ -335,11 +335,17 @@ nanGetBssIdxbyBand(
 		DBGLOG(NAN, WARN, "no band info\n");
 		prNANSpecInfo = nanGetSpecificBssInfo(
 				prAdapter, NAN_BSS_INDEX_BAND0);
+		if (!prNANSpecInfo)
+			return 0;
+
 		return prNANSpecInfo->ucBssIndex;
 	}
 
 	for (ucIdx = 0; ucIdx < NAN_BSS_INDEX_NUM; ucIdx++) {
 		prNANSpecInfo = nanGetSpecificBssInfo(prAdapter, ucIdx);
+		if (!prNANSpecInfo)
+			return 0;
+
 		prBssInfo = GET_BSS_INFO_BY_INDEX(
 			prAdapter,
 			prNANSpecInfo->ucBssIndex);

@@ -2130,7 +2130,7 @@ uint32_t wlanoidGetStaDump(struct ADAPTER *prAdapter,
 	/* BW */
 	if (rxRateStatus == 0) {
 		kalMemZero(tmpbuf, sizeof(tmpbuf));
-		kalSnprintf(tmpbuf, 3, HW_TX_RATE_BW[rRxRateInfo.u4Bw] + 2);
+		kalSnprintf(tmpbuf, 4, HW_TX_RATE_BW[rRxRateInfo.u4Bw] + 2);
 		index += kalSprintf(pvSetBuffer + index, " rxbandwidth:%sMHz",
 			tmpbuf);
 		DBGLOG(OID, TRACE, "rxbandwidth:%sMHz\n", tmpbuf);
@@ -2138,7 +2138,7 @@ uint32_t wlanoidGetStaDump(struct ADAPTER *prAdapter,
 
 #if (CFG_SUPPORT_STATS_ONE_CMD == 1 && CFG_SUPPORT_LLS)
 	kalMemZero(tmpbuf, sizeof(tmpbuf));
-	kalSnprintf(tmpbuf, 3, HW_TX_RATE_BW[prLlsRateInfo->bw] + 2);
+	kalSnprintf(tmpbuf, 4, HW_TX_RATE_BW[prLlsRateInfo->bw] + 2);
 	index += kalSprintf(pvSetBuffer + index, " txbandwidth:%sMHz",
 		tmpbuf);
 	DBGLOG(OID, TRACE, "txbandwidth:%sMHz\n", tmpbuf);
@@ -4252,12 +4252,10 @@ uint32_t wlanoidSetLatencyCrtData(struct ADAPTER *prAdapter,
 	ais = aisGetAisFsmInfo(prAdapter, ucBssIndex);
 	pu4Mode = (uint32_t *) pvSetBuffer;
 
-	ais->ucLatencyMode = 0;
 	/* Mode 2: Restrict full roam scan triggered by Firmware
 	*          due to low RSSI.
 	*  Mode 3: Restrict off channel time due to full scan to < 40ms
 	*/
-	ais->ucLatencyMode = *pu4Mode;
 
 	if (ais->ucLatencyMode == WIFI_LATENCY_MODE_SCAN) {
 		ais->ucDfsChDwellTimeMs = 60;
@@ -4270,6 +4268,15 @@ uint32_t wlanoidSetLatencyCrtData(struct ADAPTER *prAdapter,
 		ais->u2OpChStayTimeMs = 0;
 		ais->ucPerScanChannelCnt = 0;
 	}
+
+	DBGLOG(REQ, INFO,
+		"Latency Mode[%d][%d],(dfs,non-dfs,Op,PerCh)=(%d,%d,%d,%d)\n",
+		ais->ucLatencyMode,
+		ais->ucLatencyCrtDataMode,
+		ais->ucDfsChDwellTimeMs,
+		ais->ucNonDfsChDwellTimeMs,
+		ais->u2OpChStayTimeMs,
+		ais->ucPerScanChannelCnt);
 
 	return WLAN_STATUS_SUCCESS;
 }
@@ -4336,10 +4343,12 @@ int testmode_set_latency_crt_data(struct wiphy *wiphy,
 {
 	int8_t *apcArgv[WLAN_CFG_ARGV_MAX] = { 0 };
 	int32_t i4Argc = 0, i4Ret = -1, i4CmdLen = 0;
-	uint32_t rStatus = WLAN_STATUS_FAILURE;
+	uint32_t rStatus = WLAN_STATUS_SUCCESS;
 	uint32_t u4SetInfoLen = 0, u4Mode = 0;
 	int8_t *pcmd = NULL;
 	struct GLUE_INFO *prGlueInfo = NULL;
+	struct AIS_FSM_INFO *ais;
+	uint8_t ucBssIndex = 0;
 
 	WIPHY_PRIV(wiphy, prGlueInfo);
 
@@ -4352,6 +4361,8 @@ int testmode_set_latency_crt_data(struct wiphy *wiphy,
 		DBGLOG(REQ, ERROR, "kalMemAlloc failed!\n");
 		return WLAN_STATUS_FAILURE;
 	}
+
+	ais = aisGetAisFsmInfo(prGlueInfo->prAdapter, ucBssIndex);
 	kalMemZero(pcmd, i4CmdLen);
 	kalMemCopy(pcmd, pcCommand, i4TotalLen);
 	pcmd[i4CmdLen - 1] = '\0';
@@ -4373,6 +4384,18 @@ int testmode_set_latency_crt_data(struct wiphy *wiphy,
 		if (pcmd)
 			kalMemFree(pcmd, VIR_MEM_TYPE, i4CmdLen);
 		return WLAN_STATUS_FAILURE;
+	}
+
+	/* Check whether current latency mode is in higher level */
+	ais->ucLatencyCrtDataMode = u4Mode;
+	ais->ucLatencyMode = ais->ucLatencyWifiMode > ais->ucLatencyCrtDataMode?
+		ais->ucLatencyWifiMode : ais->ucLatencyCrtDataMode;
+
+	if (ais->ucLatencyMode != ais->ucLatencyCrtDataMode) {
+		DBGLOG(INIT, INFO,
+			"Latency Mode didn't change[%d][%d]!\n",
+			ais->ucLatencyMode, ais->ucLatencyCrtDataMode);
+		goto exit;
 	}
 
 	/* Do further scan handling for mode 2 and mode 3,
@@ -4401,7 +4424,7 @@ int testmode_set_latency_crt_data(struct wiphy *wiphy,
 
 	if (pcmd)
 		kalMemFree(pcmd, VIR_MEM_TYPE, i4CmdLen);
-
+exit:
 	return rStatus;
 }
 #endif

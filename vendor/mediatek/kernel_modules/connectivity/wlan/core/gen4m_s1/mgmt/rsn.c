@@ -507,14 +507,8 @@ u_int8_t rsnParseRsnIE(IN struct ADAPTER *prAdapter,
 		cp += 2;
 		i4RemainRsnIeLen -= 2;
 
-		if (u2PmkidCount > 4) {
-			DBGLOG(RSN, TRACE,
-				"Bad RSN IE due to PMKID count(%d)\n",
-				u2PmkidCount);
-			return FALSE;
-		}
-
-		if (u2PmkidCount > 0 && i4RemainRsnIeLen < 16 * u2PmkidCount) {
+		if (u2PmkidCount > 0 &&
+		    i4RemainRsnIeLen < IW_PMKID_LEN * u2PmkidCount) {
 			DBGLOG(RSN, TRACE,
 				"Fail to parse PMKID in RSN iE, count: %d\n",
 				u2PmkidCount);
@@ -523,8 +517,8 @@ u_int8_t rsnParseRsnIE(IN struct ADAPTER *prAdapter,
 
 		if (u2PmkidCount > 0) {
 			kalMemCopy(prRsnInfo->aucPmkid, cp, IW_PMKID_LEN);
-			cp += IW_PMKID_LEN;
-			i4RemainRsnIeLen -= IW_PMKID_LEN;
+			cp += (IW_PMKID_LEN * u2PmkidCount);
+			i4RemainRsnIeLen -= (IW_PMKID_LEN * u2PmkidCount);
 		}
 
 		if (i4RemainRsnIeLen == 0)
@@ -540,9 +534,6 @@ u_int8_t rsnParseRsnIE(IN struct ADAPTER *prAdapter,
 		WLAN_GET_FIELD_32(cp, &u4GroupMgmtSuite);
 		cp += 4;
 		i4RemainRsnIeLen -= 4;
-
-		if (i4RemainRsnIeLen == 0)
-			break;
 	} while (FALSE);
 
 	/* Save the RSN information for the BSS. */
@@ -2483,10 +2474,10 @@ void rsnParserCheckForRSNCCMPPSK(struct ADAPTER *prAdapter,
 			return;
 		}
 
-		if (prAdapter->rWifiVar.fgSapCheckPmkidInDriver
-			&& prBssInfo->u4RsnSelectedAKMSuite
-				== RSN_AKM_SUITE_SAE
-			&& rRsnIe.u2PmkidCount > 0) {
+		if (prAdapter->rWifiVar.fgSapCheckPmkidInDriver &&
+		    prBssInfo->u4RsnSelectedAKMSuite == RSN_AKM_SUITE_SAE &&
+		    rRsnIe.u2PmkidCount > 0 &&
+		    prStaRec->ucAuthAlgNum == AUTH_ALGORITHM_NUM_OPEN_SYSTEM) {
 			struct PMKID_ENTRY *entry =
 				rsnSearchPmkidEntry(prAdapter,
 				prStaRec->aucMacAddr,

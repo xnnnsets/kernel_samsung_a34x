@@ -1077,6 +1077,213 @@ void nanNdpeAttrVendorSpecificHandler(struct ADAPTER *prAdapter,
 }
 #endif
 
+/**
+ * Get the pointer to availability to specific availability type and channel in
+ * the specific band.
+ * Check only availability with NAN_BAND_CH_ENTRY_LIST_TYPE_CHNL
+ */
+struct _NAN_AVAILABILITY_ENTRY_T *
+nanAvailabilityAttrGetAvailability(struct ADAPTER *prAdapter,
+				   void *pAvailabilityAttr,
+				   uint8_t ucAvailabilityType,
+	/* Bitmap of _NAN_SUPPORTED_BAND_BIT */ uint8_t ucBandList)
+{
+	struct _NAN_ATTR_NAN_AVAILABILITY_T *prAvailabilityAttr =
+					pAvailabilityAttr;
+	struct _NAN_AVAILABILITY_ENTRY_T *prAvailEntry;
+	struct _NAN_SIMPLE_CHNL_ENTRY_T *prBandChnlList;
+	struct _NAN_AVAILABILITY_TIMEBITMAP_ENTRY_T *prTimeBitmap;
+	struct _NAN_BAND_CHNL_LIST_T *prChnlList;
+	uint8_t *pTimeBitmapTmp;
+	uint8_t *pucAvailEntry;
+	uint8_t *pucAvailAttrEnd;
+	uint32_t i;
+	uint8_t ucTimeBitmapLength;
+	uint8_t *pucChnl;
+
+	pucAvailEntry = prAvailabilityAttr->aucAvailabilityEntryList;
+	pucAvailAttrEnd = NAN_ATTR_END(prAvailabilityAttr);
+
+	do {
+		prAvailEntry =
+			(struct _NAN_AVAILABILITY_ENTRY_T *)pucAvailEntry;
+		pucAvailEntry = NAN_AVAIL_ENTRY_END(prAvailEntry);
+
+		if (!prAvailEntry->rCtrl.u2TimeBitmapPresent)
+			continue;
+
+		if (!(prAvailEntry->u2EntryControl & ucAvailabilityType))
+			continue;
+
+		prTimeBitmap = (struct _NAN_AVAILABILITY_TIMEBITMAP_ENTRY_T *)
+			prAvailEntry;
+		ucTimeBitmapLength = prTimeBitmap->ucTimeBitmapLength;
+		if (ucTimeBitmapLength != 4)
+			continue;
+
+		prChnlList = (struct _NAN_BAND_CHNL_LIST_T *)
+			(prTimeBitmap->aucTimeBitmapAndBandChnl +
+			 ucTimeBitmapLength);
+
+		pTimeBitmapTmp = prTimeBitmap->aucTimeBitmapAndBandChnl;
+
+		if (prChnlList->ucNonContiguous)
+			continue;
+
+		if (prChnlList->ucType == NAN_BAND_CH_ENTRY_LIST_TYPE_BAND)
+			continue;
+
+		/* NAN_BAND_CH_ENTRY_LIST_TYPE_CHNL */
+		pucChnl = prChnlList->aucEntry;
+		if (prChnlList->ucNumberOfEntry *
+		    sizeof(struct _NAN_CHNL_ENTRY_NO_AUX_T) >
+		    pucAvailEntry - pucChnl) {
+			DBGLOG(NAN, WARN,
+			       "Channel ucNumberOfEntry=%u too large (> %td)",
+			       prChnlList->ucNumberOfEntry,
+			       pucAvailEntry - pucChnl);
+			continue;
+		}
+
+		prBandChnlList = (struct _NAN_SIMPLE_CHNL_ENTRY_T *)
+			prChnlList->aucEntry;
+
+		if (prChnlList->ucNumberOfEntry != 1)
+			continue;
+
+		for (i = 0; i < prChnlList->ucNumberOfEntry; i++) {
+			uint8_t ucOpClass = prBandChnlList[i].ucOperatingClass;
+
+			DBGLOG(NAN, TRACE,
+			       "Check ctrl=0x%04x op=%u, filter type=%u, band=0x%02x",
+			       prAvailEntry->u2EntryControl, ucOpClass,
+			       ucAvailabilityType, ucBandList);
+
+			if (ucBandList & BIT(ENUM_SUPPORTED_BN_6G) &&
+			    IS_6G_OP_CLASS(ucOpClass))
+				return prAvailEntry;
+
+			if (ucBandList & BIT(ENUM_SUPPORTED_BN_5G_HIGH) &&
+			    IS_5G_OP_CLASS(ucOpClass) &&
+			    !IS_5G_LOW_ONLY_OP_CLASS(ucOpClass))
+				return prAvailEntry;
+
+			if (ucBandList & BIT(ENUM_SUPPORTED_BN_5G_LOW) &&
+			    IS_5G_OP_CLASS(ucOpClass) &&
+			    !IS_5G_HIGH_ONLY_OP_CLASS(ucOpClass))
+				return prAvailEntry;
+
+			if (ucBandList & BIT(ENUM_SUPPORTED_BN_2G) &&
+			    IS_2G_OP_CLASS(ucOpClass))
+				return prAvailEntry;
+
+		}
+	} while (pucAvailEntry < pucAvailAttrEnd);
+
+	return NULL;
+}
+/**
+ * Overwrite 5G conditional field with 6G channel info for special case:
+ * 1. Data Path Request
+ * 2. Peer sets 6G potential availability (the common band contains 6G)
+ * 3. Peer does not set 6G capability
+ * 4. Peer sets 5G conditioanl availability
+ */
+static uint32_t nanOverwrite5gConditionalBy6g(struct ADAPTER *prAdapter,
+				      enum _NAN_ACTION_T eNanAction,
+				      uint8_t *pucNmiAddr,
+				      uint8_t ucCommonBands,
+				      struct _NAN_ATTR_HDR_T *pAvailabilityAttr)
+{
+	struct _NAN_PEER_SCH_DESC_T *prPeerSchDesc;
+	struct _NAN_DEVICE_CAPABILITY_T *prDevCap;
+
+	struct _NAN_AVAILABILITY_ENTRY_SIMPLE_T *prConditional5g;
+	struct _NAN_AVAILABILITY_ENTRY_SIMPLE_T *prPotential6g;
+	struct _NAN_SIMPLE_BAND_CHNL_LIST_T *pr6gChannel;
+	struct _NAN_SIMPLE_BAND_CHNL_LIST_T *pr5gChannel;
+	u_int8_t fgPeerCapSuport6G = FALSE;
+	size_t i;
+
+	if (eNanAction != NAN_ACTION_DATA_PATH_REQUEST)
+		return WLAN_STATUS_NOT_SUPPORTED;
+
+	prPeerSchDesc = nanSchedAcquirePeerSchDescByNmi(prAdapter, pucNmiAddr);
+	if (!prPeerSchDesc)
+		return WLAN_STATUS_FAILURE;
+
+	if ((ucCommonBands & BIT(ENUM_SUPPORTED_BN_6G)) == 0)
+		return WLAN_STATUS_NOT_SUPPORTED;
+
+	for (i = 0; i < ARRAY_SIZE(prPeerSchDesc->arDevCapability); i++) {
+		prDevCap = &prPeerSchDesc->arDevCapability[i];
+
+		/* only consider valid ones */
+		if (!prDevCap->fgValid)
+			continue;
+
+		if (prDevCap->ucCapabilitySet &
+		    (NAN_PROPRIETARY_6G_BIT | NAN_SUPPORTED_6G_BIT))
+			fgPeerCapSuport6G = TRUE;
+	}
+	if (fgPeerCapSuport6G)
+		return WLAN_STATUS_NOT_SUPPORTED;
+
+	DBGDUMP_HEX(NAN, TRACE, "Before substitute conditional",
+		    pAvailabilityAttr, NAN_ATTR_SIZE(pAvailabilityAttr))
+
+	/* Find conditional 5G channel info */
+
+
+	prConditional5g = (struct _NAN_AVAILABILITY_ENTRY_SIMPLE_T *)
+		nanAvailabilityAttrGetAvailability(prAdapter,
+					   pAvailabilityAttr,
+					   NAN_AVAIL_ENTRY_CTRL_AVAIL_TYPE_COND,
+					   BIT(ENUM_SUPPORTED_BN_5G_HIGH) |
+					   BIT(ENUM_SUPPORTED_BN_5G_LOW));
+	if (!prConditional5g)
+		return WLAN_STATUS_INVALID_DATA;
+
+	pr5gChannel = &prConditional5g->channelEntry;
+
+	/* Find potential 6G channel info */
+	prPotential6g = (struct _NAN_AVAILABILITY_ENTRY_SIMPLE_T *)
+		nanAvailabilityAttrGetAvailability(prAdapter,
+					   pAvailabilityAttr,
+					   NAN_AVAIL_ENTRY_CTRL_AVAIL_TYPE_POTN,
+					   BIT(ENUM_SUPPORTED_BN_6G));
+	if (!prPotential6g)
+		return WLAN_STATUS_INVALID_DATA;
+
+	pr6gChannel = &prPotential6g->channelEntry;
+	if (pr6gChannel->ucNumberOfEntry != 1)
+		return WLAN_STATUS_INVALID_DATA;
+
+	if (pr6gChannel->ucNonContiguous != 0)
+		return WLAN_STATUS_INVALID_DATA;
+
+	/* Write potential 6G channel info to conditional 5G channel info */
+	DBGLOG(NAN, INFO,
+	       "Overwrite 5G conditional t=%u, nc=%u, n=%u, oc=%u, chnl=%u, with 6G potential t=%u, nc=%u, n=%u, oc=%u, chnl=%u",
+	       pr5gChannel->ucType,
+	       pr5gChannel->ucNonContiguous,
+	       pr5gChannel->ucNumberOfEntry,
+	       pr5gChannel->rChnlEntry.ucOperatingClass,
+	       pr5gChannel->rChnlEntry.ucPrimaryChnlBitmap,
+	       pr6gChannel->ucType,
+	       pr6gChannel->ucNonContiguous,
+	       pr6gChannel->ucNumberOfEntry,
+	       pr6gChannel->rChnlEntry.ucOperatingClass,
+	       pr6gChannel->rChnlEntry.ucPrimaryChnlBitmap);
+	kalMemCopy(pr5gChannel, pr6gChannel, sizeof(*pr5gChannel));
+
+	DBGDUMP_HEX(NAN, INFO,
+		    "After force overwrite 5G conditional with 6G potential",
+		    pAvailabilityAttr, NAN_ATTR_SIZE(pAvailabilityAttr))
+
+	return WLAN_STATUS_SUCCESS;
+}
+
 /*----------------------------------------------------------------------------*/
 /*!
  * \brief        Attribute Parser for
@@ -1193,6 +1400,11 @@ nanNdlParseAttributes(struct ADAPTER *prAdapter,
 				DBGLOG(NAN, TRACE,
 				       "Set process NDC with Availability");
 			}
+
+			nanOverwrite5gConditionalBy6g(prAdapter,
+						eNanAction,
+						prNDL->aucPeerMacAddr,
+						ucCommonBands, prNanAttr);
 
 			rStatus = nanAvailabilityAttrHandler(prAdapter,
 					eNanAction,
@@ -2026,6 +2238,10 @@ nanNdpParseAttributes(struct ADAPTER *prAdapter,
 					nanGetCommonBandWithConcurrent(
 						prAdapter, TRUE,
 						ucCommonBands);
+
+			nanOverwrite5gConditionalBy6g(prAdapter, eNanAction,
+						      prNDL->aucPeerMacAddr,
+						      ucCommonBands, prNanAttr);
 
 			rStatus = nanAvailabilityAttrHandler(prAdapter,
 					eNanAction,

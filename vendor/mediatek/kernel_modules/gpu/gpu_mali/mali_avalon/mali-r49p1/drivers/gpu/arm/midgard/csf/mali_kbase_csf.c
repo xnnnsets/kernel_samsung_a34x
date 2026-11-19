@@ -94,11 +94,18 @@ const u8 kbasep_csf_relative_to_queue_group_priority[KBASE_QUEUE_GROUP_PRIORITY_
  * @idle_seq:  The highest priority group that notified idle. If no such instance in the
  *             interrupt case, marked with the largest field value: U32_MAX.
  * @idle_slot: The slot number if @p idle_seq is valid in the given tracking case.
+ * @active_protm_slot: record the active p.mode CSG slot number during the iterative CSG
+ *                     interrupt handling, in current IRQ context.
+ * @protm_slots_enqueued: tracking each CSG that has enqueued its pending p.mode request
+ *                        during the iterative CSG/CS interrupt handlings, in current IRQ
+ *                        context.
  */
 struct irq_idle_and_protm_track {
 	struct kbase_queue_group *protm_grp;
 	u32 idle_seq;
 	s8 idle_slot;
+	s8 active_protm_slot;
+	DECLARE_BITMAP(protm_req_enqueued, MAX_SUPPORTED_CSGS);
 };
 
 /**
@@ -3163,8 +3170,10 @@ static void process_cs_interrupts(struct kbase_queue_group *const group,
 			track->protm_grp = group;
 		}
 
-		if (!group->protected_suspend_buf.pma)
+		if (!group->protected_suspend_buf.pma) {
+			bitmap_set(track->protm_req_enqueued, group->csg_nr, 1);
 			kbase_csf_scheduler_enqueue_protm_event_work(group);
+		}
 
 		if (test_bit(group->csg_nr, scheduler->csg_slots_idle_mask)) {
 			clear_bit(group->csg_nr, scheduler->csg_slots_idle_mask);
@@ -3436,15 +3445,18 @@ static inline void check_protm_enter_req_complete(struct kbase_device *kbdev, u3
  *
  * @kbdev: Instance of a GPU platform device that implements a CSF interface.
  * @glb_ack: Global acknowledge register value.
+ * @track: Pointer to tracked information containing protected mode requests
+ *         enqueuing action, in current IRQ context.
  *
  * This function handles the PROTM_EXIT interrupt and sends notification
  * about the protected mode exit to components like HWC, IPA_CONTROL.
  */
-static inline void process_protm_exit(struct kbase_device *kbdev, u32 glb_ack)
+static inline void process_protm_exit(struct kbase_device *kbdev, u32 glb_ack,
+                                      const struct irq_idle_and_protm_track *track)
 {
 	const struct kbase_csf_global_iface *const global_iface = &kbdev->csf.global_iface;
 	struct kbase_csf_scheduler *scheduler = &kbdev->csf.scheduler;
-	struct kbase_queue_group *completed_grp = NULL;
+	struct kbase_queue_group *exit_grp = scheduler->active_protm_grp;
 
 	lockdep_assert_held(&kbdev->hwaccess_lock);
 	kbase_csf_scheduler_spin_lock_assert_held(kbdev);
@@ -3457,8 +3469,6 @@ static inline void process_protm_exit(struct kbase_device *kbdev, u32 glb_ack)
 
 	kbase_csf_firmware_global_input_mask(global_iface, GLB_REQ, glb_ack,
 					     GLB_REQ_PROTM_EXIT_MASK);
-
-	completed_grp = scheduler->active_protm_grp;
 
 	if (likely(scheduler->active_protm_grp)) {
 		KBASE_KTRACE_ADD_CSF_GRP(kbdev, SCHEDULER_PROTM_EXIT, scheduler->active_protm_grp,
@@ -3478,15 +3488,16 @@ static inline void process_protm_exit(struct kbase_device *kbdev, u32 glb_ack)
 		kbase_hwcnt_backend_csf_protm_exited(&kbdev->hwcnt_gpu_iface);
 	}
 
-	/* WA: If pmode exiting group still has pending PROTM requests,
-	 * re-queue them immediately instead of waiting for the next
-	 * tick/tock to queue the pending bitmap.
-	 */
-	if (completed_grp &&
-	    !bitmap_empty(completed_grp->protm_pending_bitmap,
-			  kbdev->csf.global_iface.groups[0].stream_num)) {
-		dev_dbg(kbdev->dev, "Pmode exit re-queues group %d", completed_grp->handle);
-		kbase_csf_scheduler_enqueue_protm_event_work(completed_grp);
+	if (likely(exit_grp)) {
+		s8 slot = track->active_protm_slot;
+		bool enqeued = (slot >= 0) && test_bit(slot, track->protm_req_enqueued);
+
+		/* re-enqueue the group for possible p.mode continuation */
+		if (!enqeued && !bitmap_empty(exit_grp->protm_pending_bitmap,
+					      MAX_SUPPORTED_STREAMS_PER_GROUP)) {
+			dev_dbg(kbdev->dev, "Re-queues the pmode exit group %d", exit_grp->handle);
+			kbase_csf_scheduler_enqueue_protm_event_work(exit_grp);
+		}
 	}
 
 #if IS_ENABLED(CONFIG_MALI_MTK_MBRAIN_SUPPORT)
@@ -3506,6 +3517,10 @@ static inline void process_tracked_info_for_protm(struct kbase_device *kbdev,
 	u32 current_protm_pending_seq = scheduler->tick_protm_pending_seq;
 
 	kbase_csf_scheduler_spin_lock_assert_held(kbdev);
+
+	/* Track the active p.mode CSG's slot number, if applicable */
+	if (scheduler->active_protm_grp)
+		track->active_protm_slot = scheduler->active_protm_grp->csg_nr;
 
 	if (likely(current_protm_pending_seq == KBASEP_TICK_PROTM_PEND_SCAN_SEQ_NR_INVALID))
 		return;
@@ -3547,6 +3562,7 @@ static inline void process_tracked_info_for_protm(struct kbase_device *kbdev,
 		if (!tock_triggered) {
 			dev_dbg(kbdev->dev, "Group-%d on slot-%d start protm work\n", group->handle,
 				group->csg_nr);
+			bitmap_set(track->protm_req_enqueued, group->csg_nr, 1);
 			kbase_csf_scheduler_enqueue_protm_event_work(group);
 		}
 	}
@@ -3628,14 +3644,16 @@ void kbase_csf_interrupt(struct kbase_device *kbdev, u32 val)
 		unsigned long flags;
 		u32 csg_interrupts = val & ~JOB_IRQ_GLOBAL_IF;
 		bool glb_idle_irq_received = false;
+		struct irq_idle_and_protm_track track = { .protm_grp = NULL,
+							  .idle_seq = U32_MAX,
+							  .idle_slot = S8_MAX,
+							  .active_protm_slot = -1,
+							  .protm_req_enqueued = { 0 } };
 
 		kbase_reg_write32(kbdev, JOB_CONTROL_ENUM(JOB_IRQ_CLEAR), val);
 		order_job_irq_clear_with_iface_mem_read();
 
 		if (csg_interrupts != 0) {
-			struct irq_idle_and_protm_track track = { .protm_grp = NULL,
-								  .idle_seq = U32_MAX,
-								  .idle_slot = S8_MAX };
 			DECLARE_BITMAP(progress_timeout_csgs, MAX_SUPPORTED_CSGS) = { 0 };
 
 			kbase_csf_scheduler_spin_lock(kbdev, &flags);
@@ -3679,7 +3697,7 @@ void kbase_csf_interrupt(struct kbase_device *kbdev, u32 val)
 				check_protm_enter_req_complete(kbdev, glb_req, glb_ack);
 
 				if ((glb_req ^ glb_ack) & GLB_REQ_PROTM_EXIT_MASK)
-					process_protm_exit(kbdev, glb_ack);
+					process_protm_exit(kbdev, glb_ack, &track);
 
 				/* Handle IDLE Hysteresis notification event */
 				if ((glb_req ^ glb_ack) & GLB_REQ_IDLE_EVENT_MASK) {

@@ -711,6 +711,10 @@ endif
 ccflags-y += -DCFG_MLO_LINK_PLAN_MODE=1
 endif
 
+ifneq ($(filter $(MODULE_NAME), wlan_drv_gen4m_6991_6639_tc10sp wlan_6991_6639),)
+    CONFIG_SUPPORT_WONDERTAP=y
+endif
+
 # ===== Before is project setting =====
 include $(CFG_DIR)/defconfig
 ifneq ($(wildcard $(CFG_DIR)/${MTK_COMBO_CHIP}/defconfig),)
@@ -2082,6 +2086,12 @@ else
     ccflags-y += -DCFG_SUPPORT_LLS_MDDP=0
 endif
 
+ifeq ($(CONFIG_SUPPORT_TESTMODE_FWDL), y)
+ccflags-y += -DCFG_TESTMODE_FWDL_SUPPORT=1
+else
+ccflags-y += -DCFG_TESTMODE_FWDL_SUPPORT=0
+endif
+
 ifeq ($(CONFIG_MTK_WIFI_SUPPORT_DSP_FWDL), y)
     ccflags-y += -DCFG_MTK_WIFI_SUPPORT_DSP_FWDL=1
 else
@@ -2190,7 +2200,7 @@ else
     ccflags-y += -DCFG_SUPPORT_DBDC_DOWNGRADE_NSS=0
 endif
 
-ifeq ($(MODULE_NAME), wlan_drv_gen4m_6991_6639_tc10sp)
+ifneq ($(filter $(MODULE_NAME), wlan_drv_gen4m_6991_6639_tc10sp wlan_6991_6639),)
     ifeq ($(CONFIG_MTK_COMBO_WIFI_HIF), pcie)
         ccflags-y += -DCFG_PCIE_MT6991=1
     else
@@ -2220,6 +2230,24 @@ ifeq ($(CONFIG_SUPPORT_DEFAULT_WOWLAN_CONFIG), y)
     ccflags-y += -DCFG_SUPPORT_DEFAULT_WOWLAN_CONFIG=1
 else
     ccflags-y += -DCFG_SUPPORT_DEFAULT_WOWLAN_CONFIG=0
+endif
+
+ifeq ($(CONFIG_SUPPORT_WONDERTAP), y)
+    ccflags-y += -DCFG_SUPPORT_WONDERTAP=1
+else
+    ccflags-y += -DCFG_SUPPORT_WONDERTAP=0
+endif
+
+ifeq ($(CONFIG_TX_GSO), y)
+    ccflags-y += -DCFG_TX_GSO=1
+else
+    ccflags-y += -DCFG_TX_GSO=0
+endif
+
+ifeq ($(CONFIG_SW_TSO), y)
+    ccflags-y += -DCFG_SW_TSO=1
+else
+    ccflags-y += -DCFG_SW_TSO=0
 endif
 
 # ---------------------------------------------------
@@ -2682,6 +2710,18 @@ HIF_OBJS :=  $(HIF_DIR)ut.o \
              $(HIF_DIR)hal_api.o
 else ifeq ($(CONFIG_MTK_COMBO_WIFI_HIF), none)
 HIF_OBJS :=  $(HIF_DIR)none.o
+endif
+
+# wed support
+ifeq ($(CONFIG_MTK_WIFI_WED), y)
+HIF_OBJS += $(HIF_COMMON_DIR)hal_wed.o
+ccflags-y += -DCFG_SUPPORT_WED_PROXY=1
+else
+ccflags-y += -DCFG_SUPPORT_WED_PROXY=0
+endif
+
+ifeq ($(CONFIG_SUPPORT_WONDERTAP), y)
+    OS_OBJS += $(OS_DIR)gl_wondertap.o
 endif
 
 # ---------------------------------------------------

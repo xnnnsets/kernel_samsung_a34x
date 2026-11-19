@@ -223,6 +223,11 @@ u_int8_t secCheckClassError(struct ADAPTER *prAdapter,
 		return FALSE;
 	}
 
+#if CFG_SUPPORT_WONDERTAP
+	if (IS_BSS_INDEX_WON(prAdapter, ucBssIndex))
+		return TRUE;
+#endif
+
 	prRxDescOps = prAdapter->chip_info->prRxDescOps;
 	prRxStatus = prSwRfb->prRxStatus;
 	ucClassErr = prRxDescOps->nic_rxd_get_sw_class_error_bit(prRxStatus);

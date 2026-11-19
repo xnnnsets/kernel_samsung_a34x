@@ -2114,6 +2114,13 @@ uint8_t cnmGetBssMaxBw(struct ADAPTER *prAdapter,
 	} else {
 		ucChannelBw = rlmDomainGetChannelBw(prBssInfo->eBand,
 			prBssInfo->ucPrimaryChannel);
+		if (p2pFuncIsAPMode(
+			prAdapter->rWifiVar.
+			prP2PConnSettings[prBssInfo->u4PrivateData]) &&
+			rlmDomainIsIndoorBw20(prAdapter,
+				 prBssInfo->eBand,
+				 prBssInfo->ucPrimaryChannel))
+			ucMaxBandwidth = MAX_BW_20MHZ;
 	}
 
 	if (!prAdapter->rWifiVar.ucForceBw) {

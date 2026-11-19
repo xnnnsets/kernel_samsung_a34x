@@ -4739,6 +4739,12 @@ uint32_t scanProcessBeaconAndProbeResp(struct ADAPTER *prAdapter,
 				&rStatus, prBssDesc, prWlanBeaconFrame);
 		}
 #endif
+#if CFG_SUPPORT_WONDERTAP
+		if (prAdapter->fgIsWONRegistered) {
+			scanWonProcessBeaconAndProbeResp(prAdapter, prSwRfb,
+				&rStatus, prBssDesc, prWlanBeaconFrame);
+		}
+#endif
 	}
 
 	return rStatus;

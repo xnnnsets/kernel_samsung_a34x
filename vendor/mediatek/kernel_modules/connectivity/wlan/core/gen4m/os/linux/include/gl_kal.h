@@ -96,6 +96,12 @@ extern u_int8_t wlan_perf_monitor_force_enable;
 #define KAL_P2P_NUM 2
 #endif
 
+#ifdef CFG_WON_NUM
+#define KAL_WON_NUM CFG_WON_NUM
+#else
+#define KAL_WON_NUM 1
+#endif
+
 #define OID_HDLR_REC_NUM	5
 
 #define SKB_RESERVED_SIZE	32
@@ -137,8 +143,11 @@ extern u_int8_t wlan_perf_monitor_force_enable;
 #define PERF_MON_UPDATE_LONG_INTERVAL (2000)
 #define PERF_MON_TP_MAX_THRESHOLD (12)
 #define PERF_MON_TP_NAN_LEVEL (11)
+#define PERF_MON_TP_WON_LEVEL (11)
+#define PERF_MON_STA_ONLY_THRESHOLD (0xff)
 
 #define PERF_MON_NAN_BOOST_CPU_THRESHOLD 5
+#define PERF_MON_WON_BOOST_CPU_THRESHOLD 1
 
 #define PERF_MON_TP_CONDITION (125000)
 #define PERF_MON_COEX_TP_THRESHOLD (100)
@@ -1602,6 +1611,8 @@ void *kalPacketAllocWithHeadroom(struct GLUE_INFO
 				 *prGlueInfo,
 				 uint32_t u4Size, uint8_t **ppucData);
 
+uint8_t kalQuery80211HeaderLength(void *prPacket);
+
 uint32_t kalQueryPacketLength(void *pvPacket);
 
 void kalSetPacketLength(void *pvPacket, uint32_t u4len);
@@ -2316,6 +2327,11 @@ uint32_t kalGetCpuBoostThreshold(void);
 #if CFG_SUPPORT_LITTLE_CPU_BOOST
 uint32_t kalGetLittleCpuBoostThreshold(void);
 #endif /* CFG_SUPPORT_LITTLE_CPU_BOOST */
+#if (CFG_SUPPORT_WONDERTAP == 1)
+void kalWonBoostCheck(struct ADAPTER *prAdapter, uint32_t u4TputLv);
+u_int8_t kalIsWonStateChange(struct ADAPTER *prAdapter);
+u_int8_t kalIsWonBoost(struct ADAPTER *prAdapter);
+#endif /* CFG_SUPPORT_WONDERTAP */
 uint32_t kalGetChipID(void);
 int32_t kalCheckVcoreBoost(struct ADAPTER *prAdapter, uint8_t uBssIndex);
 uint32_t kalGetConnsysVersion(void);

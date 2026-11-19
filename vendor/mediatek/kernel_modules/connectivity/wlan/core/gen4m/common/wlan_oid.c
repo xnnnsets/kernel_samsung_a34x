@@ -12844,6 +12844,8 @@ wlanoidSetCountryCode(struct ADAPTER *prAdapter,
 	ASSERT(prAdapter);
 	ASSERT(pvSetBuffer);
 
+	/* Todo: Need to block FWK setting country code */
+
 	if (regd_is_single_sku_en()) {
 		rlmDomainOidSetCountry(prAdapter, pvSetBuffer,
 				       u4SetBufferLen);

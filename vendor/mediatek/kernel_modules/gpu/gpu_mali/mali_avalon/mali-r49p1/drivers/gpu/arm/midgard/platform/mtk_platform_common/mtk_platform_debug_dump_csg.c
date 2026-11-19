@@ -43,7 +43,7 @@ void mtk_debug_csf_dump_groups_and_queues(struct kbase_device *kbdev, struct kba
         return;
     }
     if (!kctx) {
-        mtk_log_critical_exception(kbdev, true, "%s kctx NULL!", __func__);
+        mtk_log_critical_exception(kbdev, true, "%s<%d> kctx NULL!", __func__, __LINE__);
         return;
     }
 
@@ -53,7 +53,7 @@ void mtk_debug_csf_dump_groups_and_queues(struct kbase_device *kbdev, struct kba
     }
     do {
         struct kbase_context *kctx_dump, *kctx_checker;
-        int found;
+        bool kctx_found;
         int ret;
 
         mtk_log_critical_exception(kbdev, true,
@@ -61,20 +61,25 @@ void mtk_debug_csf_dump_groups_and_queues(struct kbase_device *kbdev, struct kba
 
         /* check kctx if exist */
         if (!mtk_debug_trylock(&kbdev->kctx_list_lock)) {
-            mtk_log_critical_exception(kbdev, true, "%s lock kctx_list_lock failed!", __func__);
-            break;
+        mtk_log_critical_exception(kbdev, true, "%s<%d> lock kctx_list_lock failed!", __func__, __LINE__);
+             break;
         }
-        found = false;
+        kctx_found = false;
         list_for_each_entry(kctx_checker, &kbdev->kctx_list, kctx_list_link) {
             if (kctx == kctx_checker) {
-                found = true;
+                kctx_found = true;
                 break;
             }
         }
-        if (!found) {
+        if (!kctx_found) {
             mtk_log_critical_exception(kbdev, true,
-                    "%s kctx %d_%d isn't exist in kctx_list, kctx failed!",
-                    __func__, kctx->tgid, kctx->id);
+                "%s<%d> kctx isn't exist in kctx_list, kctx failed!",
+                __func__, __LINE__);
+            mutex_unlock(&kbdev->kctx_list_lock);
+            break;
+        }
+        if (!mtk_debug_trylock(&kctx->dump_queue_lock)) {
+            mtk_log_critical_exception(kbdev, true, "%s<%d> lock dump_queue_lock failed!", __func__, __LINE__);
             mutex_unlock(&kbdev->kctx_list_lock);
             break;
         }
@@ -116,7 +121,7 @@ void mtk_debug_csf_dump_groups_and_queues(struct kbase_device *kbdev, struct kba
 
         /* dump groups */
         if (!mtk_debug_trylock(&kbdev->kctx_list_lock)) {
-            mtk_log_critical_exception(kbdev, true, "%s lock kctx_list_lock failed!", __func__);
+            mtk_log_critical_exception(kbdev, true, "%s<%d> lock kctx_list_lock failed!", __func__, __LINE__);
             mutex_unlock(&kbdev->csf.scheduler.lock);
             mutex_unlock(&kctx->csf.lock);
             break;
@@ -177,7 +182,7 @@ void mtk_debug_csf_dump_groups_and_queues(struct kbase_device *kbdev, struct kba
             mtk_debug_cs_queue_data_dump(kbdev, &cs_queue_data);
             mutex_unlock(&kbdev->kctx_list_lock);
         }
-
+        mutex_unlock(&kctx->dump_queue_lock);
     } while (false);
 
     if (dump_queue_data) {

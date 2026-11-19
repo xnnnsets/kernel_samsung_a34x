@@ -2366,7 +2366,8 @@ nicTxFillDesc(struct ADAPTER *prAdapter,
 #endif
 
 		if (prTxDescOps->nic_txd_chksum_op)
-			prTxDescOps->nic_txd_chksum_op(prTxDesc, ucChksumFlag,
+			prTxDescOps->nic_txd_chksum_op(prAdapter,
+					prTxDesc, ucChksumFlag,
 					prMsduInfo);
 		else
 			DBGLOG(TX, ERROR, "no nic_txd_chksum_op??\n");
@@ -2493,10 +2494,19 @@ uint32_t nicTxGenerateDescTemplate(struct ADAPTER
 
 	/* Fill up MsduInfo template */
 	prMsduInfo->eSrc = TX_PACKET_OS;
-	prMsduInfo->fgIs802_11 = FALSE;
+#if CFG_SUPPORT_WONDERTAP
+	if (IS_BSS_INDEX_WON(prAdapter, prStaRec->ucBssIndex)) {
+		prMsduInfo->fgIs802_11 = TRUE;
+		prMsduInfo->fgIs802_3 = FALSE;
+
+	} else
+#endif
+	{
+		prMsduInfo->fgIs802_11 = FALSE;
+		prMsduInfo->fgIs802_3 = TRUE;
+	}
 	prMsduInfo->fgIs802_1x = FALSE;
 	prMsduInfo->fgIs802_1x_NonProtected = FALSE;
-	prMsduInfo->fgIs802_3 = TRUE;
 	prMsduInfo->fgIsVlanExists = FALSE;
 	prMsduInfo->pfTxDoneHandler = NULL;
 	prMsduInfo->prPacket = NULL;
@@ -3496,11 +3506,32 @@ u_int8_t nicTxFillMsduInfo(struct ADAPTER *prAdapter,
 	prGlueInfo = prAdapter->prGlueInfo;
 	ASSERT(prGlueInfo);
 
-	kalGetEthDestAddr(prAdapter->prGlueInfo, prPacket,
-			  prMsduInfo->aucEthDestAddr);
+	prMsduInfo->ucBssIndex = GLUE_GET_PKT_BSS_IDX(prPacket);
+
+#if CFG_SUPPORT_WONDERTAP
+	if (IS_BSS_INDEX_WON(prAdapter,
+		prMsduInfo->ucBssIndex)) {
+		struct WLAN_MAC_HEADER *prWlanHeader = NULL;
+		struct sk_buff *prSkb = (struct sk_buff *)prPacket;
+
+		prWlanHeader = (struct WLAN_MAC_HEADER *)prSkb->data;
+#if CFG_WONDERTAP_TX_RX_DEBUG
+		DBGLOG(WON, INFO, "bss: %u\n", prMsduInfo->ucBssIndex);
+		DBGLOG(WON, INFO, "aucEthDestAddr: " MACSTR "\n",
+			MAC2STR(prMsduInfo->aucEthDestAddr));
+#endif
+		COPY_MAC_ADDR(prMsduInfo->aucEthDestAddr,
+			prWlanHeader->aucAddr1);
+	} else
+#endif
+	{
+		kalGetEthDestAddr(
+			prAdapter->prGlueInfo,
+			prPacket,
+			prMsduInfo->aucEthDestAddr);
+	}
 
 	prMsduInfo->prPacket = prPacket;
-	prMsduInfo->ucBssIndex = GLUE_GET_PKT_BSS_IDX(prPacket);
 #if CFG_SUPPORT_WIFI_SYSDVT
 	if (prAdapter->ucTxTestUP != TX_TEST_UP_UNDEF)
 		prMsduInfo->ucUserPriority = prAdapter->ucTxTestUP;
@@ -3519,6 +3550,19 @@ u_int8_t nicTxFillMsduInfo(struct ADAPTER *prAdapter,
 	prMsduInfo->u4PageCount = nicTxGetDataPageCount(prAdapter,
 				  prMsduInfo->u2FrameLength, FALSE);
 
+#if CFG_SUPPORT_WONDERTAP
+	if (IS_BSS_INDEX_WON(prAdapter, prMsduInfo->ucBssIndex)) {
+		nicTxConfigPktControlFlag(prMsduInfo,
+			MSDU_CONTROL_FLAG_DIS_MAT,
+			TRUE);
+#if CFG_WONDERTAP_TX_RX_DEBUG
+		DBGLOG(WON, INFO,
+			"Bssidx %u data set DIS_MAT",
+			prMsduInfo->ucBssIndex);
+#endif
+	}
+#endif
+
 	if (GLUE_IS_PKT_FLAG_SET(prPacket)) {
 		prMsduInfo->fgIs802_1x = GLUE_TEST_PKT_FLAG(prPacket,
 					 ENUM_PKT_1X) ? TRUE : FALSE;
@@ -3529,6 +3573,10 @@ u_int8_t nicTxFillMsduInfo(struct ADAPTER *prAdapter,
 					ENUM_PKT_802_3) ? TRUE : FALSE;
 		prMsduInfo->fgIsVlanExists = GLUE_TEST_PKT_FLAG(prPacket,
 			ENUM_PKT_VLAN_EXIST) ? TRUE : FALSE;
+#if (CFG_SUPPORT_WONDERTAP == 1)
+		prMsduInfo->fgIs802_11 = GLUE_TEST_PKT_FLAG(prPacket,
+					ENUM_PKT_802_11) ? TRUE : FALSE;
+#endif
 #if CFG_SUPPORT_TX_MGMT_USE_DATAQ
 		prMsduInfo->fgIs802_11 = GLUE_TEST_PKT_FLAG(prPacket,
 					 ENUM_PKT_802_11_MGMT) ? TRUE : FALSE;
@@ -3554,6 +3602,10 @@ u_int8_t nicTxFillMsduInfo(struct ADAPTER *prAdapter,
 			prMsduInfo->ucPktType = ENUM_PKT_TDLS;
 		else if (GLUE_TEST_PKT_FLAG(prPacket, ENUM_PKT_DNS))
 			prMsduInfo->ucPktType = ENUM_PKT_DNS;
+#if (CFG_SUPPORT_WONDERTAP == 1)
+		else if (GLUE_TEST_PKT_FLAG(prPacket, ENUM_PKT_802_11))
+			prMsduInfo->ucPktType = ENUM_PKT_802_11;
+#endif
 #if CFG_SUPPORT_TX_MGMT_USE_DATAQ
 		else if (GLUE_TEST_PKT_FLAG(prPacket, ENUM_PKT_802_11_MGMT))
 			prMsduInfo->ucPktType = ENUM_PKT_802_11_MGMT;
@@ -6064,7 +6116,8 @@ static void nicTxDirectCheckStaAcmQ(struct ADAPTER *prAdapter,
 		if (prMsduInfo == NULL)
 			break;
 
-		if (!wmmAcmCanTx(prAdapter, prBssInfo, prStaRec, ucAc,
+		if (!prMsduInfo->fgIs802_1x &&
+		    !wmmAcmCanTx(prAdapter, prBssInfo, prStaRec, ucAc,
 			prMsduInfo->u2FrameLength)) {
 			QUEUE_INSERT_HEAD(prTmpQue,
 				  (struct QUE_ENTRY *) prMsduInfo);

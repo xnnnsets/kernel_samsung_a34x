@@ -137,11 +137,62 @@ static struct GLUE_INFO *g_prGlueInfo_proc;
 static struct proc_dir_entry *gprProcRoot;
 #if (BUILD_QA_DBG)
 static uint32_t u4McrOffset;
-static uint8_t aucDbModuleName[][PROC_DBG_LEVEL_MAX_DISPLAY_STR_LEN] = {
-	"INIT", "HAL", "INTR", "REQ", "TX", "RX", "RFTEST", "EMU",
-	"SW1", "SW2", "SW3", "SW4", "HEM", "AIS", "RLM", "MEM",
-	"CNM", "RSN", "BSS", "SCN", "SAA", "AAA", "P2P", "QM",
-	"SEC", "BOW", "WAPI", "ROAMING", "TDLS", "PF", "OID", "NIC"
+static const char * const aucDbModuleName[] = {
+	[DBG_INIT_IDX] = "INIT",
+	[DBG_HAL_IDX] = "HAL",
+	[DBG_INTR_IDX] = "INTR",
+	[DBG_REQ_IDX] = "REQ",
+	[DBG_TX_IDX] = "TX",
+	[DBG_RX_IDX] = "RX",
+	[DBG_RFTEST_IDX] = "RFTEST",
+	[DBG_EMU_IDX] = "EMU",
+	[DBG_SW1_IDX] = "SW1",
+	[DBG_SW2_IDX] = "SW2",
+	[DBG_SW3_IDX] = "SW3",
+	[DBG_SW4_IDX] = "SW4",
+	[DBG_HEM_IDX] = "HEM",
+	[DBG_AIS_IDX] = "AIS",
+	[DBG_RLM_IDX] = "RLM",
+	[DBG_MEM_IDX] = "MEM",
+	[DBG_CNM_IDX] = "CNM",
+	[DBG_RSN_IDX] = "RSN",
+	[DBG_BSS_IDX] = "BSS",
+	[DBG_SCN_IDX] = "SCN",
+	[DBG_SAA_IDX] = "SAA",
+	[DBG_AAA_IDX] = "AAA",
+	[DBG_P2P_IDX] = "P2P",
+	[DBG_QM_IDX] = "QM",
+	[DBG_SEC_IDX] = "SEC",
+	[DBG_BOW_IDX] = "BOW",
+	[DBG_WAPI_IDX] = "WAPI",
+	[DBG_ROAMING_IDX] = "ROAMING",
+	[DBG_TDLS_IDX] = "TDLS",
+	[DBG_PF_IDX] = "PF",
+	[DBG_OID_IDX] = "OID",
+	[DBG_NIC_IDX] = "NIC",
+	[DBG_WNM_IDX] = "WNM",
+	[DBG_WMM_IDX] = "WMM",
+	[DBG_TRACE_IDX] = "TRACE",
+	[DBG_TWT_REQUESTER_IDX] = "TWT_REQ",
+	[DBG_TWT_PLANNER_IDX] = "TWT_PLN",
+	[DBG_TWT_RESPONDER_IDX] = "TWT_RES",
+	[DBG_SMC_IDX] = "SMC",
+	[DBG_RRM_IDX] = "RRM",
+	[DBG_ML_IDX] = "ML",
+	[DBG_RTT_IDX] = "RTT",
+	[DBG_NAN_IDX] = "NAN",
+	[DBG_ICS_IDX] = "ICS",
+	[DBG_HIF_WMM_ENHANCE_IDX] = "HIF_WMM",
+	[DBG_APS_IDX] = "APS",
+	[DBG_SA_IDX] = "SA",
+	[DBG_MET_IDX] = "MET",
+	[DBG_FILS_IDX] = "FILS",
+	[DBG_AM_IDX] = "AM",
+	[DBG_CCM_IDX] = "CCM",
+	[DBG_PASN_IDX] = "PASN",
+	[DBG_UNI_FWDL_IDX] = "FWDL",
+	[DBG_CSI_IDX] = "CSI",
+	[DBG_WON_IDX] = "WON",
 };
 #endif /* (BUILD_QA_DBG) */
 
@@ -2036,6 +2087,10 @@ int32_t procRemoveProcfs(void)
 	remove_proc_entry(PROC_CFG, gprProcRoot);
 #endif /* (BUILD_QA_DBG) */
 
+#if CFG_SUPPORT_WONDERTAP
+	procRemoveFsWondertap(gprProcRoot);
+#endif
+
 	return 0;
 } /* end of procRemoveProcfs() */
 
@@ -2136,6 +2191,10 @@ int32_t procCreateFsEntry(struct GLUE_INFO *prGlueInfo)
 	}
 #endif
 #endif /* ((BUILD_QA_DBG) */
+
+#if CFG_SUPPORT_WONDERTAP
+	procCreateFsWondertap(prGlueInfo, gprProcRoot);
+#endif
 
 	return 0;
 }

@@ -1664,8 +1664,11 @@ uint8_t rlmDomainIsLegalChlByNetType(struct ADAPTER *prAdapter,
 
 u_int8_t rlmDomainIsIndoorChannel(struct ADAPTER *prAdapter,
 				 enum ENUM_BAND eBand, uint8_t ucChannel);
-
+#if (CFG_CH_SELECT_ENHANCEMENT == 1)
+u_int8_t rlmDomainIsIndoorBw20(struct ADAPTER *prAdapter,
+				 enum ENUM_BAND eBand, uint8_t ucChannel);
 u_int8_t rlmDomainIsStaSapIndoorConn(struct ADAPTER *prAdapter);
+#endif
 u_int8_t rlmDomainIsLegalDfsChannel(struct ADAPTER *prAdapter,
 		enum ENUM_BAND eBand, uint8_t ucChannel);
 enum ENUM_CHNL_EXT rlmSelectSecondaryChannelType(

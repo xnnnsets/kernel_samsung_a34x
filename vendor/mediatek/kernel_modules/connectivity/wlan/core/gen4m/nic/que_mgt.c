@@ -562,9 +562,15 @@ void qmActivateStaRec(struct ADAPTER *prAdapter,
 		prAdapter->rWifiVar.ucAmpduTx);
 	prStaRec->fgRxAmpduEn = IS_FEATURE_ENABLED(
 		prAdapter->rWifiVar.ucAmpduRx);
-
-	nicTxGenerateDescTemplate(prAdapter, prStaRec);
-
+#if CFG_SUPPORT_WONDERTAP
+	if (IS_BSS_INDEX_WON(prAdapter, prStaRec->ucBssIndex)) {
+		DBGLOG(WON, INFO,
+			"WONDER interface skip generate TxDesc template\n");
+	} else
+#endif
+	{
+		nicTxGenerateDescTemplate(prAdapter, prStaRec);
+	}
 	qmUpdateStaRec(prAdapter, prStaRec);
 
 	/* Done in qmInit() or qmDeactivateStaRec() */
@@ -1392,20 +1398,21 @@ void qmDetermineStaRecIndex(struct ADAPTER *prAdapter,
 		DBGLOG(QM, INFO, "TX with prBssInfo = NULL\n");
 		return;
 	}
-
-	DBGLOG(QM, LOUD,
+#if CFG_WONDERTAP_TX_RX_DEBUG
+	DBGLOG(WON, INFO,
 		"Msdu BSS Idx[%u] OpMode[%u] StaRecOfApExist[%u]\n",
 		prMsduInfo->ucBssIndex, prBssInfo->eCurrentOPMode,
 		prBssInfo->prStaRecOfAP ? TRUE : FALSE);
-
+#endif
 	switch (prBssInfo->eCurrentOPMode) {
 	case OP_MODE_IBSS:
 	case OP_MODE_ACCESS_POINT:
 	case OP_MODE_NAN:
+	case OP_MODE_WON:
 		/* 4 <1> DA = BMCAST */
 		if (IS_BMCAST_MAC_ADDR(prMsduInfo->aucEthDestAddr)) {
 			prMsduInfo->ucStaRecIndex = STA_REC_INDEX_BMCAST;
-			DBGLOG(QM, LOUD, "TX with DA = BMCAST\n");
+			DBGLOG(WON, INFO, "TX with DA = BMCAST\n");
 			return;
 		}
 		break;
@@ -1850,7 +1857,8 @@ qmDequeueTxPacketsFromPerStaQueues(struct ADAPTER *prAdapter,
 #endif
 
 #if CFG_SUPPORT_SOFT_ACM
-				if (fgAcmFlowCtrl) {
+				if (fgAcmFlowCtrl &&
+				    !prDequeuedPkt->fgIs802_1x) {
 					uint32_t u4PktTxTime = 0;
 
 					u4PktTxTime = wmmCalculatePktUsedTime(
@@ -3606,6 +3614,41 @@ static void fillRxNullStaRec(struct ADAPTER *prAdapter,
 	}
 }
 
+static inline uint16_t qmGetFrameCtrl(struct SW_RFB *prSwRfb)
+{
+	if (prSwRfb->fgHdrTran)
+		return HAL_RX_STATUS_GET_FRAME_CTL_FIELD(
+			prSwRfb->prRxStatusGroup4);
+
+	return ((struct WLAN_MAC_HEADER *)prSwRfb->pvHeader)->u2FrameCtrl;
+}
+
+static struct RX_BA_ENTRY *qmGetRxReorderParam(
+	struct ADAPTER *prAdapter,
+	struct SW_RFB *prSwRfb,
+	u_int8_t fgIsBMC)
+{
+	struct RX_BA_ENTRY *prReorderQueParm = NULL;
+	struct STA_RECORD *prStaRec = prSwRfb->prStaRec;
+	uint16_t u2FrameType;
+
+	if (prSwRfb->ucTid >= CFG_RX_MAX_BA_TID_NUM ||
+		prSwRfb->fgFragFrame || fgIsBMC || !prStaRec)
+		return NULL;
+
+	u2FrameType = qmGetFrameCtrl(prSwRfb) & MASK_FRAME_TYPE;
+	if (u2FrameType != MAC_FRAME_DATA &&
+	    u2FrameType != MAC_FRAME_QOS_DATA)
+		return NULL;
+
+	prReorderQueParm = prStaRec->aprRxReorderParamRefTbl[prSwRfb->ucTid];
+
+	if (prReorderQueParm && prReorderQueParm->fgIsValid)
+		return prReorderQueParm;
+
+	return NULL;
+}
+
 /*----------------------------------------------------------------------------*/
 /*!
  * \brief Handle RX packets (buffer reordering)
@@ -3666,7 +3709,10 @@ struct SW_RFB *qmHandleRxPackets(struct ADAPTER *prAdapter,
 #endif /* CFG_SUPPORT_HOST_OFFLOAD == 1 */
 
 		prRxStatus = prCurrSwRfb->prRxStatus;
-		if (prCurrSwRfb->u2RxByteCount > CFG_RX_MAX_PKT_SIZE) {
+		if (prCurrSwRfb->u2RxByteCount > CFG_RX_MAX_PKT_SIZE &&
+		    prCurrSwRfb->prStaRec &&
+		    !IS_BSS_INDEX_WON(prAdapter,
+		      prCurrSwRfb->prStaRec->ucBssIndex)) {
 			prCurrSwRfb->eDst = RX_PKT_DESTINATION_NULL;
 			QUEUE_INSERT_TAIL(prReturnedQue, prCurrSwRfb);
 			DBGLOG(QM, ERROR,
@@ -3976,28 +4022,58 @@ struct SW_RFB *qmHandleRxPackets(struct ADAPTER *prAdapter,
 				prCurrSwRfb->prStaRec) == TRUE)) {
 				struct RX_BA_ENTRY *prReorderQueParm = NULL;
 
-				if ((prCurrSwRfb->ucTid < CFG_RX_MAX_BA_TID_NUM)
-					&& !fgIsBMC && fgIsHTran &&
-					(HAL_RX_STATUS_GET_FRAME_CTL_FIELD(
-					prCurrSwRfb->prRxStatusGroup4) &
-					MASK_FRAME_TYPE) != MAC_FRAME_DATA) {
-					prReorderQueParm =
-						((prCurrSwRfb->prStaRec->
-						aprRxReorderParamRefTbl)[
-						prCurrSwRfb->ucTid]);
-				}
+				prReorderQueParm = qmGetRxReorderParam(
+					prAdapter, prCurrSwRfb, fgIsBMC);
 
 				if (fgSwRxReordering && prReorderQueParm &&
 					prReorderQueParm->fgIsValid) {
 					/* Only QoS Data frame with BA aggrement
 					 * shall enter reordering buffer
 					 */
+#if CFG_WONDERTAP_TX_RX_DEBUG
+					DBGLOG(WON, INFO,
+						"WONDER Reorder Rx Pkt BSSidx:%u, StaRecIdx:%u, widx:%u, tid:%u, SN:%u, PLfmt:%u, bmc:%u, pkttype:%u, FmType:0x%04x\n",
+						GLUE_GET_PKT_BSS_IDX(prCurrSwRfb
+						  ->pvPacket),
+						prCurrSwRfb->ucStaRecIdx,
+						prCurrSwRfb->ucWlanIdx,
+						prCurrSwRfb->ucTid,
+						prCurrSwRfb->u2SSN,
+						prCurrSwRfb->ucPayloadFormat,
+						fgIsBMC,
+						prCurrSwRfb->ucPacketType,
+						qmGetFrameCtrl(prCurrSwRfb) &
+						  MASK_FRAME_TYPE);
+#endif
 					qmProcessPktWithReordering(prAdapter,
 						prCurrSwRfb,
 						prReturnedQue);
-				} else
+				} else {
+#if CFG_WONDERTAP_TX_RX_DEBUG
+					DBGLOG(WON, INFO,
+						"WONDER non-reorder Rx Pkt BSSidx:%u, StaRecIdx:%u, widx:%u, tid:%u, SN:%u, PLfmt:%u, bmc:%u, pkttype:%u, FmType:0x%04x\n",
+						GLUE_GET_PKT_BSS_IDX(prCurrSwRfb
+						  ->pvPacket),
+						prCurrSwRfb->ucStaRecIdx,
+						prCurrSwRfb->ucWlanIdx,
+						prCurrSwRfb->ucTid,
+						prCurrSwRfb->u2SSN,
+						prCurrSwRfb->ucPayloadFormat,
+						fgIsBMC,
+						prCurrSwRfb->ucPacketType,
+						qmGetFrameCtrl(prCurrSwRfb) &
+						MASK_FRAME_TYPE);
+#endif
 					qmHandleRxPackets_AOSP_1;
-			} else {
+				}
+			}
+#if CFG_SUPPORT_WONDERTAP
+			else if (nicRxHandleWonPkt(prAdapter, prCurrSwRfb)) {
+				DBGLOG(RX, INFO,
+					"By pass rx wondertap packet\n");
+			}
+#endif
+			else {
 				DBGLOG(RX, TEMP,
 					"Mark NULL the Packet for class error\n");
 				RX_INC_CNT(&prAdapter->rRxCtrl,
@@ -4242,9 +4318,18 @@ u_int8_t qmAmsduValidation(struct ADAPTER *prAdapter,
 					"QM: Abnormal AMSDU Unexpected HLen.");
 		}
 
+		if (fgDrop == FALSE) {
+			const uint8_t aucMalformedDa[] = {
+				0xAA, 0xAA, 0x03, 0x00, 0x00, 0x00};
+
+			if (EQUAL_MAC_ADDR(pucDaAddr, aucMalformedDa))
+				fgDrop = TRUE;
+		}
+
 		if (fgDrop == FALSE &&
 			pucCmpAddr != NULL && pucAmsduAddr != NULL) {
-			if (UNEQUAL_MAC_ADDR(pucCmpAddr, pucAmsduAddr))
+			if (UNEQUAL_MAC_ADDR(pucCmpAddr, pucAmsduAddr) &&
+			    !IS_MCAST_MAC_ADDR(pucCmpAddr))
 				fgDrop = TRUE;
 
 #define __STR_FMT__ \

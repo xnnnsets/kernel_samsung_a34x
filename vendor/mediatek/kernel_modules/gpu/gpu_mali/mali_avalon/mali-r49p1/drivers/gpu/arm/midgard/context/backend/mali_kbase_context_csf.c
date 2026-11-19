@@ -47,6 +47,24 @@
 #include <mali_kbase_debug_mem_allocs.h>
 #include <mali_kbase_mem_pool_debugfs.h>
 
+#if IS_ENABLED(CONFIG_MALI_MTK_DEBUG_DUMP)
+#include <linux/mutex.h>
+#include <linux/jiffies.h>
+#include <linux/delay.h>
+
+static int mutex_lock_with_timeout(struct mutex *m, unsigned long timeout_ms)
+{
+    unsigned long deadline = jiffies + msecs_to_jiffies(timeout_ms);
+
+    while (time_before(jiffies, deadline)) {
+        if (mutex_trylock(m))
+            return 0;
+        usleep_range(1000, 2000);
+    }
+    return -ETIMEDOUT;
+}
+#endif /* CONFIG_MALI_MTK_DEBUG_DUMP */
+
 void kbase_context_debugfs_init(struct kbase_context *const kctx)
 {
 	kbase_debug_mem_view_init(kctx);
@@ -85,7 +103,12 @@ KBASE_EXPORT_SYMBOL(kbase_context_debugfs_term);
 static void kbase_context_free(struct kbase_context *kctx)
 {
 	kbase_timeline_post_kbase_context_destroy(kctx);
-
+#if IS_ENABLED(CONFIG_MALI_MTK_DEBUG_DUMP)
+	if (!mutex_lock_with_timeout(&kctx->dump_queue_lock, 2500)) {
+		//dev_dbg(kctx->kbdev->dev, "%s<%d> lock dump_queue_lock", __func__, __LINE__);
+		mutex_unlock(&kctx->dump_queue_lock);
+	}
+#endif /* CONFIG_MALI_MTK_DEBUG_DUMP */
 	vfree(kctx);
 }
 

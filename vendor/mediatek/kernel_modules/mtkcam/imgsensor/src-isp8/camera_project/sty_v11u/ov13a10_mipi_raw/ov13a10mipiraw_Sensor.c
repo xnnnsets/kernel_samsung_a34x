@@ -49,7 +49,7 @@ static int sNightHyperlapseCnt;
 static bool night_hyperlapse_sync_flag = false;
 static bool using_long_exp;
 
-#define FRAME_SKIP_FOR_NIGHT_HYPERLAPSE (1)
+#define FRAME_SKIP_FOR_NIGHT_HYPERLAPSE (0)
 
 #ifdef CONFIG_CAMERA_ADAPTIVE_MIPI_V2
 static int set_mipi_mode(enum MSDK_SCENARIO_ID_ENUM scenario_id, struct subdrv_ctx *ctx);
@@ -1120,7 +1120,7 @@ static void ov13a10_set_streaming_control(struct subdrv_ctx *ctx, bool enable)
 			ctx->current_fps = ctx->pclk / ctx->line_length * 10 / ctx->frame_length;
 
 			/* group param hold on */
-			set_i2c_buffer(ctx, 0x3208, 0);
+			subdrv_i2c_wr_u8(ctx, 0x3208, 0);
 
 			subdrv_i2c_wr_u8(ctx, 0x380C, (ctx->line_length >> 8) & 0xFF);
 			subdrv_i2c_wr_u8(ctx, 0x380D, ctx->line_length & 0xFF);
@@ -1128,8 +1128,8 @@ static void ov13a10_set_streaming_control(struct subdrv_ctx *ctx, bool enable)
 			subdrv_i2c_wr_u8(ctx, 0x380F, ctx->frame_length & 0xFF);
 
 			/* group param hold off */
-			set_i2c_buffer(ctx, 0x3208, 0x10);
-			set_i2c_buffer(ctx, 0x3208, 0xa0);
+			subdrv_i2c_wr_u8(ctx, 0x3208, 0x10);
+			subdrv_i2c_wr_u8(ctx, 0x3208, 0xa0);
 			sNightHyperlapseCnt = 0;
 		}
 		set_dummy(ctx);
@@ -1304,6 +1304,7 @@ static int ov13a10_set_shutter_frame_length(struct subdrv_ctx *ctx, u8 *para, u3
 
 	int fine_integ_line = 0;
 	bool gph = !ctx->is_seamless && (ctx->s_ctx.s_gph != NULL);
+	bool is_stream_off;
 
 	DRV_LOG(ctx,"input shutter: %llu(%#llx)\n", shutter, shutter);
 
@@ -1331,6 +1332,7 @@ static int ov13a10_set_shutter_frame_length(struct subdrv_ctx *ctx, u8 *para, u3
 			ctx->min_frame_length);
 	ctx->frame_length = min(ctx->frame_length, ctx->s_ctx.frame_length_max);
 
+	is_stream_off = false; 
 	/* normal -> hyperlapse */
 	if (sNightHyperlapseSpeed && night_hyperlapse_sync_flag) {
 	 	if (sNightHyperlapseSpeed == 15) {
@@ -1348,13 +1350,19 @@ static int ov13a10_set_shutter_frame_length(struct subdrv_ctx *ctx, u8 *para, u3
 
 			//group hold on
 			subdrv_i2c_wr_u8(ctx, 0x3208, 0);
+			//stream off
+			subdrv_i2c_wr_u8(ctx, 0x0100, 0x00);
+			//group hold off
+			subdrv_i2c_wr_u8(ctx, 0x3208, 0x10);
+			subdrv_i2c_wr_u8(ctx, 0x3208, 0xa0);
+
+			ov13a10_sensor_wait_stream_off(ctx);
+			is_stream_off = true;
+			DRV_LOG(ctx, "normal stream off\n");
 
 			subdrv_i2c_wr_u8(ctx, 0x380c, (ctx->line_length >> 8) & 0xFF);
 			subdrv_i2c_wr_u8(ctx, 0x380d, ctx->line_length & 0xFF);
 
-			//group hold off
-			subdrv_i2c_wr_u8(ctx, 0x3208, 0x10);
-			subdrv_i2c_wr_u8(ctx, 0x3208, 0xa0);
 			DRV_LOG_MUST(ctx,"sNightHyperlapseSpeed(%d) - change LLP: %#0x, sNightHyperlapseCnt:%d\n",
 					sNightHyperlapseSpeed, set_llp, sNightHyperlapseCnt);
 		}
@@ -1424,6 +1432,12 @@ static int ov13a10_set_shutter_frame_length(struct subdrv_ctx *ctx, u8 *para, u3
 			cust_rg_shutters & 0xFF);
 	}
 
+	if (is_stream_off) {
+		set_i2c_buffer(ctx, 0x0100, 0x01);
+		DRV_LOG(ctx, "stream on\n");
+		is_stream_off = false;
+	}
+
 	calculated_exposure_time_ms = (ctx->line_length * ctx->exposure[0]) / (ctx->pclk / 1000);
 	DRV_LOG(ctx, "exposure time: %d ms, exp[0x%x(0x%x)], fll(input/output):%u/%u, flick_en:%d\n",
 			calculated_exposure_time_ms, ctx->exposure[0], cust_rg_shutters, frame_length,
@@ -1454,6 +1468,7 @@ static int ov13a10_set_multi_shutter_frame_length(struct subdrv_ctx *ctx, u8 *pa
 	u32 calc_fl[4] = {0};
 	int readout_diff = 0;
 	bool gph = !ctx->is_seamless && (ctx->s_ctx.s_gph != NULL);
+	bool is_stream_off;
 	u32 rg_shutters[3] = {0};
 	u32 cit_step = 0;
 	u32 fll = 0, fll_temp = 0, s_fll;
@@ -1534,6 +1549,7 @@ static int ov13a10_set_multi_shutter_frame_length(struct subdrv_ctx *ctx, u8 *pa
 	fll =	max(fll, ctx->min_frame_length);
 	fll =	min(fll, ctx->s_ctx.frame_length_max);
 
+	is_stream_off = false; 
 	/* normal -> hyperlapse */
 	if (sNightHyperlapseSpeed && night_hyperlapse_sync_flag) {
 	 	if (sNightHyperlapseSpeed == 15) {
@@ -1551,14 +1567,19 @@ static int ov13a10_set_multi_shutter_frame_length(struct subdrv_ctx *ctx, u8 *pa
 
 			//group hold on
 			subdrv_i2c_wr_u8(ctx, 0x3208, 0);
+			//stream off
+			subdrv_i2c_wr_u8(ctx, 0x0100, 0x00);
+			//group off
+			subdrv_i2c_wr_u8(ctx, 0x3208, 0x10);
+			subdrv_i2c_wr_u8(ctx, 0x3208, 0xa0);
 
+			ov13a10_sensor_wait_stream_off(ctx);
+			is_stream_off = true;
+			DRV_LOG(ctx, "normal stream off\n");
 
 			subdrv_i2c_wr_u8(ctx, 0x380c, (ctx->line_length >> 8) & 0xFF);
 			subdrv_i2c_wr_u8(ctx, 0x380d, ctx->line_length & 0xFF);
 
-			//group hold off
-			subdrv_i2c_wr_u8(ctx, 0x3208, 0x10);
-			subdrv_i2c_wr_u8(ctx, 0x3208, 0xa0);
 			DRV_LOG_MUST(ctx,"sNightHyperlapseSpeed(%d) - change LLP: %#0x, sNightHyperlapseCnt:%d\n",
 					sNightHyperlapseSpeed, set_llp, sNightHyperlapseCnt);
 		}
@@ -1675,6 +1696,12 @@ static int ov13a10_set_multi_shutter_frame_length(struct subdrv_ctx *ctx, u8 *pa
 					cust_rg_shutters[i] & 0xFF);
 			}
 		}
+	}
+
+	if (is_stream_off) {	
+		set_i2c_buffer(ctx, 0x0100, 0x01);
+		DRV_LOG(ctx, "stream on\n");
+		is_stream_off = false;
 	}
 
 	calculated_exposure_time_ms = (ctx->line_length * ctx->exposure[0]) / (ctx->pclk / 1000);

@@ -3429,6 +3429,11 @@ void aisFsmSteps(struct ADAPTER *prAdapter,
 				prAdapter, ucBssIndex));
 #endif
 
+			DBGLOG(SCN, WARN, "AIS FSM LLW [L:%d,Crt:%d,Wifi:%d]\n",
+			prAisFsmInfo->ucLatencyMode,
+			prAisFsmInfo->ucLatencyCrtDataMode,
+			prAisFsmInfo->ucLatencyWifiMode);
+
 #if (CFG_SUPPORT_802_11BE_MLO == 1)
 send_msg:
 			aisScanAddRlmIE(prAdapter, prScanReqMsg);
@@ -7345,11 +7350,6 @@ void aisBssBeaconTimeout_impl(struct ADAPTER *prAdapter,
 	struct BSS_DESC *prBtoBssDesc;
 	uint8_t roam, join;
 
-#if CFG_SUPPORT_ROAMING
-	/* Triggered by BTO */
-	roamingRecordCurrentStatus(prAdapter, ucBssIndex);
-#endif
-
 	prAisFsmInfo = aisGetAisFsmInfo(prAdapter, ucBssIndex);
 	prBtoBssDesc = aisGetTargetBssDesc(prAdapter, ucBssIndex);
 	ucBssIndex = aisGetMainLinkBssIndex(prAdapter, prAisFsmInfo);
@@ -7427,6 +7427,11 @@ void aisHandleBeaconTimeout(struct ADAPTER *prAdapter, uint8_t ucBssIndex)
 
 	if (!prAisBtoInfo->prBtoBssDesc)
 		return;
+
+#if (CFG_SUPPORT_ROAMING == 1)
+	/* Triggered by BTO */
+	roamingRecordCurrentStatus(prAdapter, ucBssIndex);
+#endif /* CFG_SUPPORT_ROAMING == 1 */
 
 	DBGLOG(AIS, EVENT, ""MACSTR" set BTO flag, reason=%d\n",
 		MAC2STR(prAisBtoInfo->prBtoBssDesc->aucBSSID),

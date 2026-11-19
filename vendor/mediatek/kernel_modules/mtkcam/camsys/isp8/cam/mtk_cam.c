@@ -4065,7 +4065,7 @@ static int mtk_cam_alloc_for_engine(struct device *dev)
 	int num = eng->num_raw_devices * 3 /* raw + yuv + rms */
 		+ eng->num_camsv_devices
 		+ eng->num_mraw_devices
-		+ eng->num_larb_devices;
+		+ max_t(int, eng->num_larb_devices, 1);
 
 	dev_arr = vzalloc(sizeof(struct device *) * num);
 	if (!dev_arr)

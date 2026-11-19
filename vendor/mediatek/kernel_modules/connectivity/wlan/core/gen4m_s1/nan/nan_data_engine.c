@@ -2117,6 +2117,19 @@ nanNdpProcessDataResponse(struct ADAPTER *prAdapter,
 					prNDP);
 			}
 		} else {
+			if (prNDP->ucNDPSetupStatus ==
+			    NAN_ATTR_NDP_STATUS_REJECTED) {
+				prNDP->ucTxNextTypeStatus =
+					(prNDP->ucNDPSetupStatus
+					 << NAN_ATTR_NDP_STATUS_OFFSET) &
+					NAN_ATTR_NDP_STATUS_MASK;
+				if (prAdapter->fgIsNANfromHAL == TRUE)
+					nanNdpDataConfirmEvent(prAdapter,
+							       prNDP);
+				else
+					nanNdpSendDataConfirmEvent(prAdapter,
+								   prNDP);
+			}
 			/* disconnect directly */
 			nanDataPathProtocolFsmStep(prAdapter, NDP_DISCONNECT,
 						   prNDP);

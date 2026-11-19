@@ -267,9 +267,11 @@ struct SWITCH_CH_AND_BAND_PARAMS {
 	 ((_prBssInfo)->eConnectionState == MEDIA_STATE_CONNECTED || \
 	  (_prBssInfo)->eCurrentOPMode == OP_MODE_ACCESS_POINT || \
 	  (_prBssInfo)->eCurrentOPMode == OP_MODE_IBSS || \
-	  IS_BSS_BOW(_prBssInfo)) \
+	  IS_BSS_BOW(_prBssInfo) || IS_BSS_WON(_prBssInfo)) \
 	)
 
+#define RLM_NET_IS_11ABG(_prBssInfo) \
+		((_prBssInfo)->ucPhyTypeSet & PHY_TYPE_SET_802_11ABG)
 #define RLM_NET_IS_11N(_prBssInfo) \
 	((_prBssInfo)->ucPhyTypeSet & PHY_TYPE_SET_802_11N)
 #define RLM_NET_IS_11GN(_prBssInfo) \

@@ -266,6 +266,10 @@
 #include "gl_vendor_logger.h"
 #endif
 
+#if CFG_SUPPORT_WONDERTAP
+#include "gl_wondertap.h"
+#endif
+
 #if CFG_SUPPORT_PASSPOINT
 #include "hs20.h"
 #endif /* CFG_SUPPORT_PASSPOINT */

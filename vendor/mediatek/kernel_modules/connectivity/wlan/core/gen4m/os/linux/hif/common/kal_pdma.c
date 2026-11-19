@@ -1326,6 +1326,22 @@ u_int8_t kalDevRegWriteRange(struct GLUE_INFO *glue,
 	return ret;
 }
 
+static bool kalIsPdmaScatterAllowed(struct GLUE_INFO *pr)
+{
+#if CFG_SUPPORT_WONDERTAP
+	struct ADAPTER *ad = pr->prAdapter;
+#endif /* CFG_SUPPORT_WONDERTAP */
+
+	if (pr->fgIsEnableMon)
+		return TRUE;
+
+#if CFG_SUPPORT_WONDERTAP
+	if (ad && ad->fgIsWONRunning)
+		return TRUE;
+#endif /* CFG_SUPPORT_WONDERTAP */
+	return FALSE;
+}
+
 static bool kalWaitRxDmaDone(struct GLUE_INFO *prGlueInfo,
 			     struct RTMP_RX_RING *prRxRing,
 			     struct RXD_STRUCT *pRxD,
@@ -2402,11 +2418,11 @@ bool kalDevReadData(struct GLUE_INFO *prGlueInfo, uint16_t u2Port,
 
 	if (pRxD->LastSec0 == 0 || prRxRing->fgRxSegPkt) {
 		/* Rx segmented packet */
-		if (!prGlueInfo->fgIsEnableMon) {
+		if (!kalIsPdmaScatterAllowed(prGlueInfo)) {
 			DBGLOG(HAL, WARN,
 				"Skip Rx segmented data packet, SDL0[%u] LS0[%u] Mo[%u]\n",
 				pRxD->SDLen0, pRxD->LastSec0,
-				prGlueInfo->fgIsEnableMon);
+				kalIsPdmaScatterAllowed(prGlueInfo));
 		}
 
 		if (prAdapter->rWifiVar.fgDumpRxDsegment &&
@@ -2414,7 +2430,7 @@ bool kalDevReadData(struct GLUE_INFO *prGlueInfo, uint16_t u2Port,
 			fgSegmentFirst = TRUE;
 
 #ifdef CFG_SUPPORT_PDMA_SCATTER
-		if (prGlueInfo->fgIsEnableMon &&
+		if (kalIsPdmaScatterAllowed(prGlueInfo) &&
 			prRxRing->fgRxSegPkt == FALSE) {
 			u4CpuIdxScatter = u4CpuIdx;
 			do {
@@ -2506,7 +2522,7 @@ bool kalDevReadData(struct GLUE_INFO *prGlueInfo, uint16_t u2Port,
 #endif
 
 #ifdef CFG_SUPPORT_PDMA_SCATTER
-	if (prGlueInfo->fgIsEnableMon && fgRet == FALSE) {
+	if (kalIsPdmaScatterAllowed(prGlueInfo) && fgRet == FALSE) {
 		pucRecvBuff = ((struct sk_buff *)prRxRing->pvPacket)->data;
 		pucRecvBuff += prRxRing->u4PacketLen;
 		kalMemCopy(pucRecvBuff, prSwRfb->pucRecvBuff, pRxD->SDLen0);

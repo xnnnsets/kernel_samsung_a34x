@@ -599,6 +599,7 @@ enum ENUM_MSDU_CONTROL_FLAG {
 	MSDU_CONTROL_FLAG_HIDE_INFO = BIT(2),
 	MSDU_CONTROL_FLAG_MGNT_2_CMD_QUE = BIT(3),
 	MSDU_CONTROL_FLAG_FORCE_LINK = BIT(4),
+	MSDU_CONTROL_FLAG_DIS_MAT = BIT(5),
 };
 
 enum ENUM_MSDU_RATE_MODE {
@@ -1103,6 +1104,7 @@ struct TX_DESC_OPS_T {
 		uint8_t fgSet);
 #if (CFG_TCP_IP_CHKSUM_OFFLOAD == 1)
 	void (*nic_txd_chksum_op)(
+		struct ADAPTER *prAdapter,
 		void *prTxDesc,
 		uint8_t ucChksumFlag,
 		struct MSDU_INFO *prMsduInfo);

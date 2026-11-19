@@ -91,7 +91,8 @@ uint8_t nic_txd_v3_queue_idx_op(
 }
 
 #if (CFG_TCP_IP_CHKSUM_OFFLOAD == 1)
-void nic_txd_v3_chksum_op(void *prTxDesc, uint8_t ucChksumFlag,
+void nic_txd_v3_chksum_op(struct ADAPTER *prAdapter,
+			void *prTxDesc, uint8_t ucChksumFlag,
 			struct MSDU_INFO *prMsduInfo)
 {
 	if ((ucChksumFlag & TX_CS_IP_GEN))
@@ -109,7 +110,11 @@ void nic_txd_v3_chksum_op(void *prTxDesc, uint8_t ucChksumFlag,
 	 * were disabled for special test case.
 	 */
 	if (!(ucChksumFlag & (TX_CS_IP_GEN | TX_CS_TCP_UDP_GEN)) &&
-	    prMsduInfo->ucPktType != ENUM_PKT_ICMP)
+	    prMsduInfo->ucPktType != ENUM_PKT_ICMP
+#if (CFG_SUPPORT_WONDERTAP == 1)
+	    && !IS_BSS_INDEX_WON(prAdapter, prMsduInfo->ucBssIndex)
+#endif
+	    )
 		HAL_MAC_CONNAC3X_TXD_UNSET_HW_AMSDU(
 			(struct HW_MAC_CONNAC3X_TX_DESC *)prTxDesc);
 }
@@ -584,6 +589,14 @@ void nic_txd_v3_compose(
 		/* Must set No ACK to mask retry bit in FC */
 		HAL_MAC_CONNAC3X_TXD_SET_NO_ACK(prTxDesc);
 	}
+
+	/* TODO: fail when enable hw amsdu */
+#if CFG_SUPPORT_WON_HW
+	else if (prBssInfo &&
+		 IS_BSS_INDEX_WON(prAdapter, prBssInfo->ucBssIndex) &&
+		 prMsduInfo->ucPacketType == TX_PACKET_TYPE_DATA)
+		HAL_MAC_CONNAC3X_TXD_SET_HW_AMSDU(prTxDesc);
+#endif
 
 	/* HW AMSDU CAP */
 	if (prMsduInfo->ucPacketType == TX_PACKET_TYPE_MGMT)
