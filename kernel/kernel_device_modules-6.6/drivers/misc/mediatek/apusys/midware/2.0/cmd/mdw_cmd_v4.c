@@ -209,9 +209,13 @@ static int mdw_cmd_history_tbl_create(struct mdw_fpriv *mpriv, struct mdw_cmd *c
 	/* alloc subcmd history */
 	ch_tbl->h_sc_einfo =
 			 kcalloc(c->num_subcmds, sizeof(*ch_tbl->h_sc_einfo), GFP_KERNEL);
+	if (!ch_tbl->h_sc_einfo) {
+		ret = -ENOMEM;
+		goto free_ch_tbl;
+	}
 
 	/* assign basic info */
-	ch_tbl->uid = c->uid;
+	ch_tbl->kid = c->kid;
 	ch_tbl->num_subcmds = c->num_subcmds;
 
 	/* add history tbl node to list */
@@ -219,13 +223,12 @@ static int mdw_cmd_history_tbl_create(struct mdw_fpriv *mpriv, struct mdw_cmd *c
 	list_add_tail(&ch_tbl->ch_tbl_node , &mpriv->ch_list);
 	mutex_unlock(&mpriv->ch_mtx);
 
-	if (!ch_tbl->h_sc_einfo) {
-		ret = -ENOMEM;
-		goto out;
-	}
-
 	mdw_flw_debug("create cmd history done\n");
 
+	goto out;
+
+free_ch_tbl:
+	kfree(ch_tbl);
 out:
 	return ret;
 }
@@ -295,19 +298,26 @@ static int mdw_cmd_run(struct mdw_fpriv *mpriv, struct mdw_cmd *c)
 		mdw_flw_debug("s(0x%llx) cmd(0x%llx) run\n",
 			c->mpriv->id, c->kid);
 		if (c->power_plcy == MDW_POWERPOLICY_PERFORMANCE) {
+			uint64_t local_h_exec_time = 0;
+
+			mutex_lock(&mpriv->ch_mtx);
 			ch_tbl = mdw_cmd_ch_tbl_find(c);
+			if (ch_tbl)
+				local_h_exec_time = ch_tbl->h_exec_time;
+			mutex_unlock(&mpriv->ch_mtx);
+
 			if (!ch_tbl)
 				goto out;
 
 			if (g_mdw_poll_timeout)
 				poll_timeout = g_mdw_poll_timeout;
 
-			if (ch_tbl->h_exec_time > poll_timeout)
+			if (local_h_exec_time > poll_timeout)
 				goto out;
 
-			if (ch_tbl->h_exec_time)
-				usleep_range(MDW_POLLTIME_SLEEP_TH(ch_tbl->h_exec_time),
-					MDW_POLLTIME_SLEEP_TH(ch_tbl->h_exec_time)+10);
+			if (local_h_exec_time)
+				usleep_range(MDW_POLLTIME_SLEEP_TH(local_h_exec_time),
+					MDW_POLLTIME_SLEEP_TH(local_h_exec_time)+10);
 			mdw_cmd_poll_cmd(mpriv, c);
 		}
 	}
@@ -315,23 +325,25 @@ out:
 	return ret;
 }
 
+/*
+ * mdw_cmd_ch_tbl_find - find command history table entry by cmd kid
+ * Caller MUST hold mpriv->ch_mtx before calling this function.
+ */
 struct mdw_cmd_history_tbl *mdw_cmd_ch_tbl_find(struct mdw_cmd *c)
 {
 	struct mdw_cmd_history_tbl *ch_tbl = NULL;
 	struct mdw_fpriv *mpriv = c->mpriv;
 
-	mutex_lock(&mpriv->ch_mtx);
+	lockdep_assert_held(&mpriv->ch_mtx);
+
 	list_for_each_entry(ch_tbl, &mpriv->ch_list, ch_tbl_node) {
-		if(ch_tbl->uid == c->uid) {
+		if (ch_tbl->kid == c->kid) {
 			mdw_flw_debug("find ch_tbl uid(0x%llx)\n", c->uid);
-			goto out;
+			return ch_tbl;
 		}
 	}
-	ch_tbl = NULL;
 
-out:
-	mutex_unlock(&mpriv->ch_mtx);
-	return ch_tbl;
+	return NULL;
 }
 
 void mdw_cmd_history_init(struct mdw_device *mdev)
@@ -708,9 +720,12 @@ static int mdw_cmd_complete(struct mdw_cmd *c, int ret)
 	c->handle_cmd_result_time = ts1 - ts2;
 
 	/* get cmd history table */
+	mutex_lock(&mpriv->ch_mtx);
 	ch_tbl = mdw_cmd_ch_tbl_find(c);
-	if (!ch_tbl)
+	if (!ch_tbl) {
+		mutex_unlock(&mpriv->ch_mtx);
 		goto out;
+	}
 
 	/* initial or update h_exec_time */
 	if (!ch_tbl->h_exec_time ||
@@ -731,6 +746,7 @@ static int mdw_cmd_complete(struct mdw_cmd *c, int ret)
 			mutex_unlock(&mdev->h_mtx);
 		}
 	}
+	mutex_unlock(&mpriv->ch_mtx);
 	/* check support power fast power on off */
 	if (mdev->support_power_fast_on_off == false) {
 		mdw_flw_debug("no support power fast on off\n");
@@ -767,15 +783,6 @@ out:
 	complete(&c->cmplt);
 	mutex_unlock(&c->mtx);
 
-	/* check mpriv to clean cmd */
-	mutex_lock(&mpriv->mtx);
-	ts1 = sched_clock();
-	c->enter_mpriv_release_time = ts1 - ts2;
-	atomic_dec(&mpriv->active_cmds);
-	mdev->plat_funcs->release_cmd(mpriv);
-	ts2 = sched_clock();
-	c->mpriv_release_time = ts2 - ts1;
-	mutex_unlock(&mpriv->mtx);
 	mdw_cmd_deque_trace(c, MDW_CMD_DEQUE);
 
 	/* put cmd execution ref */
@@ -977,26 +984,11 @@ static void mdw_cmd_ch_tbl_sanity_check(struct mdw_fpriv *mpriv)
 		mdw_flw_debug("session has %d cmd\n", mpriv->cmd_cnt);
 }
 
-static void mdw_cmd_ch_tbl_sc_check(struct mdw_cmd_history_tbl *ch_tbl,
-	struct mdw_cmd *c)
-{
-	/* compare num_subcmds */
-	if (ch_tbl->num_subcmds < c->num_subcmds) {
-		mdw_flw_debug("s(0x%llx) uid(0x%llx) del old ch_tbl and create new\n",
-				c->mpriv->id, c->uid);
-		list_del(&ch_tbl->ch_tbl_node);
-		kfree(ch_tbl->h_sc_einfo);
-		kfree(ch_tbl);
-		mdw_cmd_history_tbl_create(c->mpriv, c);
-	}
-}
-
 static int mdw_cmd_ioctl_run_v4(struct mdw_fpriv *mpriv, union mdw_cmd_args *args)
 {
 	struct mdw_cmd_in *in = (struct mdw_cmd_in *)args;
 	struct mdw_cmd *c = NULL, *priv_c = NULL;
 	struct sync_file *sync_file = NULL;
-	struct mdw_cmd_history_tbl *ch_tbl = NULL;
 	int ret = 0, fd = 0, wait_fd = 0, is_running = 0;
 
 	mdw_trace_begin("apumdw:user_run");
@@ -1055,6 +1047,14 @@ static int mdw_cmd_ioctl_run_v4(struct mdw_fpriv *mpriv, union mdw_cmd_args *arg
 		goto delete_cmd;
 	}
 
+	/* create ch_tbl */
+	if (mdw_cmd_history_tbl_create(mpriv, c)) {
+		mdw_drv_err("create cmd history tbl fail\n");
+		goto delete_cmd;
+	}
+	mpriv->cmd_cnt++;
+
+
 	if (in->op == MDW_CMD_IOCTL_ENQ) {
 		/* return input fence fd (enq no use fence) */
 		memset(args, 0, sizeof(*args));
@@ -1067,19 +1067,6 @@ static int mdw_cmd_ioctl_run_v4(struct mdw_fpriv *mpriv, union mdw_cmd_args *arg
 
 exec:
 	mutex_lock(&c->mtx);
-
-	/* handle cmd histroy */
-	ch_tbl = mdw_cmd_ch_tbl_find(c);
-	if (ch_tbl) {
-		mdw_flw_debug("s(0x%llx) uid(0x%llx) check num subcmd\n",
-				mpriv->id, c->uid);
-		mdw_cmd_ch_tbl_sc_check(ch_tbl, c);
-	} else {
-		mdw_flw_debug("s(0x%llx) uid(0x%llx) create ch_tbl\n",
-				mpriv->id, c->uid);
-		mdw_cmd_history_tbl_create(mpriv, c);
-		mpriv->cmd_cnt++;
-	}
 
 	/* ch_tbl sanity check */
 	mdw_cmd_ch_tbl_sanity_check(mpriv);
@@ -1141,9 +1128,6 @@ exec:
 
 	/* assign fd */
 	fd_install(fd, sync_file->file);
-
-	/* get ref for cmd exec */
-	atomic_inc(&mpriv->active_cmds);
 
 	/* return fd */
 	args->out.exec.fence = fd;

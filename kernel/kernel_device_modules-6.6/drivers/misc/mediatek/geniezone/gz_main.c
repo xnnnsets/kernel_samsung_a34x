@@ -523,12 +523,18 @@ static long tz_client_tee_service(struct file *file, void __user *arg,
 	void __user *ubuf = NULL;
 	uint32_t ubuf_sz = 0U;
 
+	if (arg == NULL) {
+		KREE_ERR("%s: arg is NULL\n", __func__);
+		return -EFAULT;
+	}
+
 	cret = copy_from_user(&cparam, arg, sizeof(cparam));
 	if (cret) {
 		KREE_ERR("%s: copy_from_user(msg) failed\n", __func__);
 		return -EFAULT;
 	}
 
+	memset(oparam, 0, sizeof(oparam));
 	if (cparam.paramTypes != TZPT_NONE || cparam.param) {
 		if (!access_ok((void *)cparam.param, sizeof(oparam)))
 			return -EFAULT;
@@ -545,6 +551,11 @@ static long tz_client_tee_service(struct file *file, void __user *arg,
 
 	handle = (KREE_SESSION_HANDLE) cparam.handle;
 	KREE_DEBUG("%s: session handle = %u\n", __func__, handle);
+
+	if (handle >= KREE_SESSION_HANDLE_MAX_SIZE) {
+		KREE_ERR("%s: session handle exceeds maximum size(512) = %d\n", __func__, handle);
+		return -EFAULT;
+	}
 
 	/* Parameter processing. */
 	memset(param, 0, sizeof(param));
@@ -577,8 +588,12 @@ static long tz_client_tee_service(struct file *file, void __user *arg,
 				ubuf_sz = oparam[i].mem.size;
 			}
 
-			KREE_DEBUG("%s: ubuf = %p, ubuf_sz = %u\n", __func__,
-				ubuf, ubuf_sz);
+			if (!ubuf || !ubuf_sz) {
+				KREE_ERR("%s: ubuf or ubuf_sz is 0\n",
+						__func__);
+				cret = -EFAULT;
+				goto error;
+			}
 
 			if (type != TZPT_MEM_OUTPUT) {
 				if (!access_ok(ubuf, ubuf_sz)) {
@@ -671,15 +686,19 @@ static long tz_client_tee_service(struct file *file, void __user *arg,
 				ubuf = oparam[i].mem.buffer;
 
 			if (type != TZPT_MEM_INPUT) {
-				cret = copy_to_user(ubuf, param[i].mem.buffer,
-					param[i].mem.size);
-				if (cret) {
-					cret = -EFAULT;
-					goto error;
+				if(param[i].mem.buffer) {
+					cret = copy_to_user(ubuf, param[i].mem.buffer,
+						param[i].mem.size);
+					if (cret) {
+						cret = -EFAULT;
+						KREE_ERR("copy_to_user from param failed\n");
+						goto error;
+					}
 				}
 			}
 
 			kfree(param[i].mem.buffer);
+
 			param[i].mem.buffer = NULL;
 			break;
 		}
@@ -714,6 +733,8 @@ error:
 		case TZPT_MEM_OUTPUT:
 		case TZPT_MEM_INOUT:
 			kfree(param[i].mem.buffer);
+
+			param[i].mem.buffer = NULL;
 			break;
 
 		default:
@@ -733,13 +754,16 @@ static TZ_RESULT _reg_shmem_from_userspace(
 	struct page **page;
 	int i;
 	uint64_t map_p_sz, pin_sz;
-	unsigned long *pfns;
 	struct page **delpages;
 
 	struct MTIOMMU_PIN_RANGE_T *pin = NULL;
 	uint64_t *map_p = NULL;
 	int __maybe_unused numOfPA  = 0;
 	KREE_SHAREDMEM_PARAM shm_param = {0};
+	struct dma_buf *dbuf = NULL;
+	struct sg_table *sgt = NULL;
+	struct dma_buf_attachment *attach = NULL;
+	struct shm_tracker *tracker = NULL;
 
 	KREE_DEBUG("[%s][%d] runs.\n", __func__, __LINE__);
 	if (((*shm_data).param.size <= 0) || (!(*shm_data).param.buffer)) {
@@ -752,9 +776,6 @@ static TZ_RESULT _reg_shmem_from_userspace(
 		(*shm_data).param.size, (*shm_data).param.buffer);
 
 	/*init value */
-	pin = NULL;
-	map_p = NULL;
-
 	shm_param.buffer = NULL;
 	shm_param.size = 0;
 	shm_param.mapAry = NULL;
@@ -762,6 +783,13 @@ static TZ_RESULT _reg_shmem_from_userspace(
 	*shm_handle = 0;
 
 	cret = TZ_RESULT_SUCCESS;
+
+	// tracker for resource container
+	tracker = kvzalloc(sizeof(*tracker), GFP_KERNEL);
+	if (!tracker) {
+		KREE_ERR("alloc fail: tracker is null.\n");
+		return TZ_RESULT_ERROR_OUT_OF_MEMORY;
+	}
 	/*
 	 * map pages
 	 */
@@ -788,7 +816,48 @@ static TZ_RESULT _reg_shmem_from_userspace(
 	}
 
 	pin->pageArray = NULL;
-	cret = _map_user_pages(pin,
+	KREE_DEBUG("[%s]%d :region_id %d.\n", __func__,__LINE__, region_id );
+	/* check dmabuf fd(region_id) */
+	if (region_id != 0) { /* shm buffer from dmabuf */
+
+		/* lock dmabuf fd */
+		dbuf = dma_buf_get(region_id);
+		if (!dbuf || IS_ERR(dbuf)) {
+			KREE_ERR("dma_buf_get error\n");
+			cret = TZ_RESULT_ERROR_ITEM_NOT_FOUND;
+			goto us_map_fail;
+		}
+
+		attach = dma_buf_attach(dbuf, &tz_system_dev->dev);
+		if (IS_ERR(attach)) {
+			dma_buf_put(dbuf);
+			cret = TZ_RESULT_ERROR_ITEM_NOT_FOUND;
+			goto us_map_fail;
+		}
+		sgt = dma_buf_map_attachment(attach, DMA_BIDIRECTIONAL);
+		if (IS_ERR(sgt)) {
+			dma_buf_detach(dbuf, attach);
+			dma_buf_put(dbuf);
+			cret = TZ_RESULT_ERROR_ITEM_NOT_FOUND;
+			goto us_map_fail;
+		}
+
+		if(((*shm_data).param.size) > (dbuf->size)) {
+			dma_buf_unmap_attachment(attach, sgt, DMA_BIDIRECTIONAL);
+			dma_buf_detach(dbuf, attach);
+			dma_buf_put(dbuf);
+			cret = TZ_RESULT_ERROR_ITEM_NOT_FOUND;
+			goto us_map_fail;
+		}
+
+		pin->nrPages = ((*shm_data).param.size + PAGE_SIZE - 1) >> PAGE_SHIFT;
+		pin->isPage  = 0;
+		tracker->is_page = 0;
+		tracker->dmabuf_info.dbuf = dbuf;
+		tracker->dmabuf_info.sgt = sgt;
+		tracker->dmabuf_info.attach = attach;
+	} else {
+		cret = _map_user_pages(pin,
 		untagged_addr((unsigned long)(*shm_data).param.buffer),
 		(*shm_data).param.size, 0);
 	if (cret) {
@@ -796,14 +865,18 @@ static TZ_RESULT _reg_shmem_from_userspace(
 		KREE_DEBUG("[%s]_map_user_pages fail. map user pages = 0x%x\n",
 			__func__, (uint32_t) cret);
 		cret = TZ_RESULT_ERROR_INVALID_HANDLE;
+
 		goto us_map_fail;
 	}
-
 	if (!pin->pageArray) {
 		KREE_ERR("[%s]pin->pageArray is null. fail.\n", __func__);
 		cret = TZ_RESULT_ERROR_GENERIC;
+
 		goto us_map_fail;
+		}
+		tracker->is_page = 1;
 	}
+
 
 	/* 2. build PA table */
 	/*check alloc size if <= 32KB*/
@@ -826,13 +899,44 @@ static TZ_RESULT _reg_shmem_from_userspace(
 	map_p[0] = pin->nrPages;
 	if (pin->isPage) {
 		page = (struct page **)pin->pageArray;
+		if (!page) {
+			KREE_ERR("[%s]page is null. fail.\n", __func__);
+			cret = TZ_RESULT_ERROR_GENERIC;
+			goto us_map_fail;
+		}
 		for (i = 0; i < pin->nrPages; i++) /* PA */
 			map_p[1 + i] =
 			(uint64_t) PFN_PHYS(page_to_pfn(page[i]));
 	} else {		/* pfn */
-		pfns = (unsigned long *)pin->pageArray;
-		for (i = 0; i < pin->nrPages; i++) /* get PA */
-			map_p[1 + i] = (uint64_t) PFN_PHYS(pfns[i]);
+		struct scatterlist *sg;
+		int page_idx = 0;
+
+		for_each_sg (sgt->sgl, sg, sgt->nents, i) {
+			if (!sg) {
+				KREE_ERR("[%s]sg is null. fail.\n", __func__);
+				cret = TZ_RESULT_ERROR_GENERIC;
+				goto us_map_fail;
+			}
+			phys_addr_t current_pa = sg_phys(sg);
+			unsigned int chunk_len = sg->length;
+			unsigned int j;
+
+			for (j = 0; j < chunk_len; j += PAGE_SIZE) {
+				if (page_idx < (pin->nrPages)) {
+					map_p[1 + page_idx] = (uint64_t)(current_pa + j);
+					page_idx++;
+				} else
+					goto end_of_loop;
+			}
+		}
+
+end_of_loop:
+		if (page_idx < (pin->nrPages)) {
+			KREE_ERR("[%s] page count mismatch. expected %u, found %d in dmabuf\n",
+					 __func__, pin->nrPages, page_idx);
+			cret = TZ_RESULT_ERROR_BAD_STATE;
+			goto us_map_fail;
+		}
 	}
 
 	/* init register shared mem params */
@@ -848,15 +952,21 @@ static TZ_RESULT _reg_shmem_from_userspace(
 	if ((cret != TZ_RESULT_SUCCESS) || (*shm_handle == 0)) {
 		KREE_ERR("[%s]RegisterSharedmem fail\n", __func__);
 		KREE_ERR("ret=0x%lx, shm_hd=0x%x)\n", cret, *shm_handle);
+		goto us_map_fail;
 	}
 
-	/*after reg. shmem, free PA list array*/
-	if (map_p != NULL)
-		kvfree(map_p);
-		//vfree(map_p);
-		/*kfree(map_p);*/
+	cret = register_shm_tracker(tracker, *shm_handle);
+	if(cret) {
+		KREE_UnregisterSharedmem(session, *shm_handle);
+		cret = TZ_RESULT_ERROR_GENERIC;
+	}
 
 us_map_fail:
+	if (map_p) {
+		kvfree(map_p);
+		map_p = NULL;
+	}
+
 	if (pin) {
 		if (pin->pageArray) {
 			delpages = (struct page **)pin->pageArray;
@@ -870,6 +980,9 @@ us_map_fail:
 		//vfree(pin);
 		kvfree(pin);
 	}
+
+	if (tracker && cret)
+		release_shmtracker_resources(tracker);
 
 	return cret;
 }

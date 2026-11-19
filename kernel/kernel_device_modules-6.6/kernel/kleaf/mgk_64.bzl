@@ -3934,6 +3934,9 @@ def get_overlay_modules_list():
         mgk_64_device_userdebug_modules.remove("drivers/misc/mediatek/mtprof/irq_monitor.ko")
 
     if "mt6991_teegris_6_overlay.config" in DEFCONFIG_OVERLAYS:
+        mgk_64_kleaf_modules.remove("//vendor/mediatek/kernel_modules/connectivity/wlan/core/gen4m_s1/build/connac2x/6877:wlan_drv_gen4m_6877")
+        mgk_64_kleaf_modules.remove("//vendor/mediatek/kernel_modules/connectivity/wlan/core/gen4m_s1/build/connac1x/6833:wlan_drv_gen4m_6833")
+        mgk_64_kleaf_modules.remove("//vendor/mediatek/kernel_modules/connectivity/wlan/core/gen4m_s1/build/connac1x/6768:wlan_drv_gen4m_6768")
         mgk_64_device_modules.remove("drivers/misc/mediatek/trusted_mem/ffa_v11.ko")
         mgk_64_device_modules.remove("drivers/misc/mediatek/trusted_mem/tmem_ffa.ko")
         mgk_64_device_modules.remove("drivers/tee/gud/610/MobiCoreDriver/mcDrvModule-ffa.ko")

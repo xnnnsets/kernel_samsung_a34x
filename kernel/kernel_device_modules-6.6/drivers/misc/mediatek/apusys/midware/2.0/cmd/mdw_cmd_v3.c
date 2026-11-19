@@ -102,13 +102,7 @@ static int mdw_cmd_complete(struct mdw_cmd *c, int ret)
 		}
 	}
 	dma_fence_put(f);
-	atomic_dec(&mpriv->active_cmds);
 	mutex_unlock(&c->mtx);
-
-	/* check mpriv to clean cmd */
-	mutex_lock(&mpriv->mtx);
-	mpriv->mdev->plat_funcs->release_cmd(mpriv);
-	mutex_unlock(&mpriv->mtx);
 
 	/* put cmd execution ref */
 	mdw_cmd_put(c);
@@ -382,9 +376,6 @@ exec:
 
 	/* assign fd */
 	fd_install(fd, sync_file->file);
-
-	/* get ref for cmd exec */
-	atomic_inc(&mpriv->active_cmds);
 
 	/* return fd */
 	args->out.exec.fence = fd;

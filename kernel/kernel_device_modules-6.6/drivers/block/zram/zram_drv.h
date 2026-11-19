@@ -191,6 +191,7 @@ struct zram {
 	unsigned long *read_bitmap;
 	u16 *refcount_table;
 	atomic_t nr_prefetch;
+	atomic_t nr_active_ctx;
 #endif
 #ifdef CONFIG_ZRAM_PERF_STAT
 	bool perf_stat_enabled;

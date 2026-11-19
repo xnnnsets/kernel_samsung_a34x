@@ -673,7 +673,6 @@ bootargs_ext = "rcu_nocbs=0-7 rcutree.enable_rcu_lazy=1";
 };
 
 &scp {
-	mbox-count = <6>;
 	/* id, mbox, send_size*/
 	send-table =
 	< 0 0  11>,/* IPI_OUT_AUDIO_VOW_1 */
@@ -685,6 +684,8 @@ bootargs_ext = "rcu_nocbs=0-7 rcutree.enable_rcu_lazy=1";
 	<17 1  6>,/* IPI_OUT_LOGGER_CTRL */
 	<29 1 16>,/* IPI_OUT_SENSOR_CTRL */
 	<31 1  7>,/* IPI_OUT_SENSOR_NOTIFY */
+	<39 1  4>,/* IPI_OUT_AOV_SCP */
+	<43 1  4>,/* IPI_OUT_NPU_SCP */
 	< 4 2  1>,/* IPI_OUT_DVFS_SET_FREQ_0 */
 	< 5 2  2>,/* IPI_OUT_C_SLEEP_0 */
 	< 6 2  1>,/* IPI_OUT_TEST_0 */
@@ -696,9 +697,7 @@ bootargs_ext = "rcu_nocbs=0-7 rcutree.enable_rcu_lazy=1";
 	<45 3  1>,/* IPI_OUT_SCP_PM_NOTIFY_0 */
 	<47 3  2>,/* IPI_PIN_HOST_SCP_CHRE */
 	<48 3  2>,/* IPI_PIN_SCP_HOST_CHRE */
-	<39 4  4>,/* IPI_OUT_AOV_SCP */
-	<43 4  4>,/* IPI_OUT_NPU_SCP */
-	<11 5 34>;/* IPI_OUT_SCP_MPOOL_0 */
+	<11 4 34>;/* IPI_OUT_SCP_MPOOL_0 */
 
 	#recv-cells-mode = <1>;
 	/* mode 0 or no defined #recv-cells-mode => 4 elements : id, mbox,
@@ -717,6 +716,8 @@ bootargs_ext = "rcu_nocbs=0-7 rcutree.enable_rcu_lazy=1";
 	<30 1  2 0 0 0 0>,/* IPI_IN_SENSOR_CTRL */
 	<32 1  7 0 0 0 0>,/* IPI_IN_SENSOR_NOTIFY */
 	<49 1  2 0 0 0 0>,/* IPI_IN_KASAN_CHECK */
+	<40 1  4 0 0 0 0>,/* IPI_IN_SCP_AOV */
+	<44 1  4 0 0 0 0>,/* IPI_IN_SCP_NPU */
 	< 5 2  1 1 0 0 0>,/* IPI_OUT_C_SLEEP_0 */
 	< 8 2 10 0 0 0 0>,/* IPI_IN_SCP_ERROR_INFO_0 */
 	<34 2 16 0 0 0 0>,/* IPI_IN_SCP_CONNSYS */
@@ -727,9 +728,7 @@ bootargs_ext = "rcu_nocbs=0-7 rcutree.enable_rcu_lazy=1";
 	<35 3  4 1 0 0 0>,/* IPI_OUT_C_SCP_HWVOTER_DEBUG */
 	<47 3  2 1 0 0 0>,/* IPI_PIN_HOST_SCP_CHRE ack slot */
 	<48 3  2 0 0 0 1>,/* IPI_PIN_SCP_HOST_CHRE msg slot */
-	<40 4  4 0 0 0 0>,/* IPI_IN_SCP_AOV */
-	<44 4  4 0 0 0 0>,/* IPI_IN_SCP_NPU */
-	<12 5 30 0 0 0 0>;/* IPI_IN_SCP_MPOOL_0 */
+	<12 4 30 0 0 0 0>;/* IPI_IN_SCP_MPOOL_0 */
 
 	legacy-table =	<11>, /* out_id_0 IPI_OUT_SCP_MPOOL_0 */
 				<24>, /* out_id_1 IPI_OUT_SCP_MPOOL_1 */

@@ -133,7 +133,7 @@ extern unsigned int reset_reason;
 #define WDT_FRAME	16
 #define MAX_EXTRA_INFO_HDR_LEN	6
 #define MAX_EXTRA_INFO_KEY_LEN	16
-#define MAX_EXTRA_INFO_VAL_LEN	1002
+#define MAX_EXTRA_INFO_VAL_LEN	768
 #define SEC_DEBUG_BADMODE_MAGIC	0x6261646d
 
 enum sec_debug_extra_buf_type {

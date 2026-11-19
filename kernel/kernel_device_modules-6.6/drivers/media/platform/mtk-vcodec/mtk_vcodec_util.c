@@ -607,27 +607,32 @@ void mtk_vcodec_set_cpu_hint(struct mtk_vcodec_dev *dev, bool enable,
 				if (!dev->freq_min_request)
 					goto after_freq_qos_add_request;
 
+				dev->freq_min_request_num = 0;
+
 				cpu = 0;
-				int num = 0, ret = 0;
+				int ret = 0;
 
 				for_each_possible_cpu(cpu) {
-					if (num >= policy_num)
+					if (dev->freq_min_request_num >= policy_num)
 						break;
 
 					policy = cpufreq_cpu_get(cpu);
 					if (!policy)
 						continue;
 
-					mtk_v4l2_debug(8, " [VDVFS][%d] cpu: %d policy: first:%d, min:%d, max:%d, num:%d",
-						ctx_id, cpu, policy->cpu, policy->min, policy->max, num);
+					mtk_v4l2_debug(8, " [VDVFS][%d] cpu: %d policy: first:%d, min:%d, max:%d, idx:%d",
+						ctx_id, cpu, policy->cpu, policy->min, policy->max,
+						dev->freq_min_request_num);
 					ret = freq_qos_add_request(&(policy->constraints),
-						&(dev->freq_min_request[num]), FREQ_QOS_MIN,
+						&(dev->freq_min_request[dev->freq_min_request_num]), FREQ_QOS_MIN,
 						FREQ_QOS_MAX_DEFAULT_VALUE);
-					if (ret < 0)
+					if (ret < 0) {
 						mtk_v4l2_debug(0, " [VDVFS][%d] fail to add freq constraint (%d) %d %d",
 							ctx_id, ret, IS_ERR_OR_NULL(&(policy->constraints)),
-							!(&(dev->freq_min_request[num])));
-					num++;
+							!(&(dev->freq_min_request[dev->freq_min_request_num])));
+					} else {
+						dev->freq_min_request_num++;
+					}
 					cpu = cpumask_last(policy->related_cpus);
 					cpufreq_cpu_put(policy);
 				}
@@ -654,26 +659,20 @@ after_freq_qos_add_request:
 
 			if (type == MTK_INST_ENCODER &&
 				dev->freq_min_request != NULL) { // limit to Encoder instance
-				int cpu = 0, num = 0, ret = 0;
-				struct cpufreq_policy *policy;
+				int i = 0, ret = 0;
 
-				for_each_possible_cpu(cpu) {
-					policy = cpufreq_cpu_get(cpu);
-					if (!policy)
-						continue;
-					mtk_v4l2_debug(8, " [VDVFS][%d] cpu: %d policy: first:%d, min:%d, max:%d",
-						ctx_id, cpu, policy->cpu, policy->min, policy->max);
-					ret = freq_qos_remove_request(&(dev->freq_min_request[num]));
+				for (i = 0; i < dev->freq_min_request_num; i++) {
+					mtk_v4l2_debug(8, " [VDVFS][%d] removing freq constraint[%d], total=%d",
+						ctx_id, i, dev->freq_min_request_num);
+					ret = freq_qos_remove_request(&(dev->freq_min_request[i]));
 					if (ret < 0)
-						mtk_v4l2_debug(0, " [VDVFS][%d] fail to remove freq constraint (%d)",
-							 ctx_id, ret);
-					num++;
-					cpu = cpumask_last(policy->related_cpus);
-					cpufreq_cpu_put(policy);
+						mtk_v4l2_debug(0, " [VDVFS][%d] fail to remove freq constraint[%d] (%d)",
+							ctx_id, i, ret);
 				}
 
 				kvfree(dev->freq_min_request);
 				dev->freq_min_request = NULL;
+				dev->freq_min_request_num = 0;
 			}
 		}
 

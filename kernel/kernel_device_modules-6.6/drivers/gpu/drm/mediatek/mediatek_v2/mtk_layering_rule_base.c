@@ -3920,7 +3920,8 @@ _copy_layer_info_from_disp(struct drm_mtk_layering_info *disp_info_user,
 
 	layer_num = l_info->layer_num[disp_idx];
 	layer_size = sizeof(struct drm_mtk_layer_config) * layer_num;
-	l_info->input_config[disp_idx] = vzalloc(layer_size);
+	l_info->input_config[disp_idx] = vcalloc(layer_num, sizeof(struct drm_mtk_layer_config));
+	// if OOM or layer_size overflow, vcalloc will failed
 	if (l_info->input_config[disp_idx] == NULL) {
 		DDPPR_ERR("%s:%d invalid input_config[%d]:0x%p\n",
 			__func__, __LINE__,
@@ -3929,7 +3930,8 @@ _copy_layer_info_from_disp(struct drm_mtk_layering_info *disp_info_user,
 	}
 
 	mml_cfg_size = sizeof(struct mml_frame_info) * layer_num;
-	l_info->mml_cfg[disp_idx] = vzalloc(mml_cfg_size);
+	l_info->mml_cfg[disp_idx] = vcalloc(layer_num, sizeof(struct mml_frame_info));
+	// if OOM or mml_cfg_size overflow, vcalloc will failed
 	if (l_info->mml_cfg[disp_idx] == NULL) {
 		DDPPR_ERR("%s:%d invalid mml_cfg[%d]:0x%p\n",
 			__func__, __LINE__,

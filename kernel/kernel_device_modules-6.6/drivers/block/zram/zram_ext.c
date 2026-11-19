@@ -734,8 +734,10 @@ static void zram_clear_flags(struct zram *zram, struct zram_wb_buffer *buf)
 
 static void zram_writeback_complete(struct zram_wb_work *zw)
 {
+	atomic_inc(&zw->zram->nr_active_ctx);
 	if (!atomic_dec_return(zw->refcount))
 		wake_up(zw->wq);
+	atomic_dec(&zw->zram->nr_active_ctx);
 	free_writeback_buffer(zw->buf);
 	bio_put(zw->bio);
 	kvfree(zw);
@@ -888,8 +890,10 @@ retry:
 	/* allocate new buffer for writeback */
 	if (buf == NULL) {
 		buf = alloc_writeback_buffer();
-		if (buf == NULL)
+		if (buf == NULL) {
+			*bufptr = NULL;
 			return -ENOMEM;
+		}
 	}
 	i = buf->idx;
 
@@ -955,6 +959,9 @@ int zram_writeback_list(struct zram *zram, struct list_head *list)
 	/* wait until all writeback requests are completed */
 	while (atomic_read(&refcount) > 0)
 		wait_event_timeout(wq, !atomic_read(&refcount), HZ);
+	/* double-check all active contexts are done */
+	while (atomic_read(&zram->nr_active_ctx))
+		schedule_timeout_uninterruptible(1);
 	return ret;
 }
 

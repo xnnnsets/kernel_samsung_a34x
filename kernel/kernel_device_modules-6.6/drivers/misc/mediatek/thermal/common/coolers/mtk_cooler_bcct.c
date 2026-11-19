@@ -132,8 +132,13 @@ mtk_chr_get_tchr(int *min_temp, int *max_temp)
 static kuid_t uid = KUIDT_INIT(0);
 static kgid_t gid = KGIDT_INIT(1000);
 
+#ifndef MIN
 #define MIN(_a_, _b_) ((_a_) > (_b_) ? (_b_) : (_a_))
+#endif
+
+#ifndef MAX
 #define MAX(_a_, _b_) ((_a_) > (_b_) ? (_a_) : (_b_))
+#endif
 
 /* Battery & Charger Status*/
 static int bat_info_soc; /* battery soc */

@@ -718,7 +718,9 @@ static uint32_t g_od_udma_merge_lines_cand[] = {
 	1, 2, 4, 6, 8, 10, 12, 14, 16,
 };
 
+#ifndef MIN
 #define MIN(a,b) (((a)<(b))?(a):(b))
+#endif
 #define OFFSET(m, n) ((m > n) ? (m - n) : 0)
 
 static unsigned char lookup[16] = {

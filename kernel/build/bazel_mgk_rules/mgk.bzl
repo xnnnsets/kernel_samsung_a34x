@@ -503,7 +503,7 @@ DEVCIE_MODULES_INCLUDE="-I\\$(DEVICE_MODULES_PATH)/include"
                     kasan_config.append(overlay_config)
                 else:
                     defconfig.append(overlay_config)
-        if ctx.attr.gki_mixed_build:
+        if ctx.attr.gki_mixed_build or (ctx.attr.build_variant != "ack"):
             defconfig.append("${ROOT_DIR}/" + ctx.attr.device_modules_dir + "/kernel/configs/sign.config")
         if ctx.attr.build_variant == "eng":
             defconfig.append("${ROOT_DIR}/" + ctx.attr.device_modules_dir + "/kernel/configs/eng.config")

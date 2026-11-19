@@ -31,7 +31,7 @@ long _map_user_pages(struct MTIOMMU_PIN_RANGE_T *pinRange, unsigned long uaddr,
 	unsigned long first, last;
 	struct page **pages;
 	struct vm_area_struct *vma;
-	int res, j;
+	int res = 0, j = 0;
 	uint32_t write;
 
 	if ((!uaddr) || (!size))
@@ -64,30 +64,7 @@ long _map_user_pages(struct MTIOMMU_PIN_RANGE_T *pinRange, unsigned long uaddr,
 					    nr_pages, write ? FOLL_WRITE : 0,
 					    pages, NULL);
 	} else {
-		/* pfn mapped memory, don't touch page struct.
-		 * the buffer manager (possibly ion) should make sure
-		 * it won't be used for anything else
-		 */
-		pinRange->isPage = 0;
-		res = 0;
-		do {
-			unsigned long *pfns = (void *)pages;
-
-			while (res < nr_pages
-			       && uaddr + PAGE_SIZE <= vma->vm_end) {
-				j = follow_pfn(vma, uaddr, &pfns[res]);
-				if (j) { /* error */
-					res = j;
-					goto out;
-				}
-				uaddr += PAGE_SIZE;
-				res++;
-			}
-			if (res >= nr_pages || uaddr < vma->vm_end)
-				break;
-			vma = find_vma_intersection(current->mm, uaddr,
-						    uaddr + 1);
-		} while (vma && vma->vm_flags & (VM_IO | VM_PFNMAP));
+		pr_debug("%s (vma->vm_flags & (VM_IO | VM_PFNMAP) is true\n", __func__);
 	}
 out:
 	up_read(&current->mm->mmap_lock);

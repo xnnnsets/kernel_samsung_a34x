@@ -30,8 +30,12 @@
 #define LOG_PROPERTY_SIZE 1024
 #define ROUND_N(X, N)   (((X) + ((N)-1)) & (~((N)-1)))    //only for N is exponential of 2
 #define CEIL_DIV(x, y) ((y) ? (((x) + (y) - 1) / (y)) : 0)
+#ifndef MIN
 #define MIN(X, Y) (((X) < (Y)) ? (X) : (Y))
+#endif
+#ifndef MAX
 #define MAX(X, Y) (((X) > (Y)) ? (X) : (Y))
+#endif
 #define ABS(x) (((x) >= 0) ? (x) : -(x))
 #define NS_TO_MS(X) (div_u64(X, 1000000))
 #define NS_MOD_MS(X) ({u64 __X = (X); do_div(__X, 1000000);})

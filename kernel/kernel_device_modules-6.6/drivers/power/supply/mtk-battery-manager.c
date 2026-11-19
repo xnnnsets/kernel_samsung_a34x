@@ -1908,6 +1908,12 @@ void mtk_bm_netlink_handler(struct sk_buff *skb)
 	nlh = (struct nlmsghdr *)skb->data;
 	seq = nlh->nlmsg_seq;
 
+	if (skb->len < NLMSG_HDRLEN + AFW_MSG_HEADER_LEN) {
+		pr_debug("[%s]netlink packet too short: skb_len=%d\n",
+			__func__, skb->len);
+		return;
+	}
+
 	data = NLMSG_DATA(nlh);
 
 	fgd_msg = (struct afw_header *)data;
@@ -1915,6 +1921,12 @@ void mtk_bm_netlink_handler(struct sk_buff *skb)
 	if (fgd_msg->identity != AFW_MAGIC) {
 		pr_err("[%s]not correct MTKFG netlink packet!%d\n",
 			__func__, fgd_msg->identity);
+		return;
+	}
+
+	if (fgd_msg->ret_data_len > AFW_MSG_MAX_LEN) {
+		pr_debug("[%s]ret_data_len too large: %d\n",
+			__func__, fgd_msg->ret_data_len);
 		return;
 	}
 

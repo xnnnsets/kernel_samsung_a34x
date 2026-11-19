@@ -186,11 +186,11 @@ void fg_daemon_send_data(struct mtk_battery *gm,
 				struct shutdown_data),
 				prcv->total_size, hash);
 			} else {
-				if ((prcv->idx + prcv->size) >
-					sizeof(struct shutdown_data)) {
-					bm_err(gm, "size is different %d size %d idx %d\n",
-						(int)sizeof(struct shutdown_data),
-						prcv->size, prcv->idx);
+				if (prcv->size > sizeof(struct shutdown_data) ||
+					prcv->idx >= sizeof(struct shutdown_data) ||
+					prcv->size > sizeof(struct shutdown_data) - prcv->idx) {
+					bm_err(gm, "%s invalid range idx:%d size:%d\n",
+					__func__, prcv->idx, prcv->size);
 					return;
 				}
 
@@ -225,11 +225,11 @@ void fg_daemon_send_data(struct mtk_battery *gm,
 				struct fgd_cmd_daemon_data),
 				prcv->total_size, hash);
 			} else {
-				if ((prcv->idx + prcv->size) >
-					sizeof(struct fgd_cmd_daemon_data)) {
-					bm_err(gm, "size is different %d size %d idx %d\n",
-						(int)sizeof(struct fgd_cmd_daemon_data),
-						prcv->size, prcv->idx);
+				if (prcv->size > DATA_SIZE ||
+					prcv->idx >= sizeof(gm->daemon_data) ||
+					prcv->size > sizeof(gm->daemon_data) - prcv->idx) {
+					bm_err(gm, "%s invalid range idx:%d size:%d\n",
+					__func__, prcv->idx, prcv->size);
 					return;
 				}
 
@@ -252,11 +252,11 @@ void fg_daemon_send_data(struct mtk_battery *gm,
 				struct fgd_cmd_param_t_custom),
 				prcv->total_size, hash);
 			} else {
-				if ((prcv->idx + prcv->size) >
-					sizeof(struct fgd_cmd_param_t_custom)) {
-					bm_err(gm, "size is different %d size %d idx %d\n",
-						(int)sizeof(struct fgd_cmd_param_t_custom),
-						prcv->size, prcv->idx);
+				if (prcv->size > DATA_SIZE ||
+					prcv->idx >= sizeof(gm->fg_data) ||
+					prcv->size > sizeof(gm->fg_data) - prcv->idx) {
+					bm_err(gm, "%s invalid range idx:%d size:%d\n",
+					__func__, prcv->idx, prcv->size);
 					return;
 				}
 
@@ -287,11 +287,11 @@ void fg_daemon_send_data(struct mtk_battery *gm,
 				prcv->total_size, hash);
 			} else {
 
-				if ((prcv->idx + prcv->size) >
-					sizeof(struct VersionControl)) {
-					bm_err(gm, "size is different %d size %d idx %d\n",
-						(int)sizeof(struct VersionControl),
-						prcv->size, prcv->idx);
+				if (prcv->size > DATA_SIZE ||
+					prcv->idx >= sizeof(gm->fg_version) ||
+					prcv->size > sizeof(gm->fg_version) - prcv->idx) {
+					bm_err(gm, "%s invalid range idx:%d size:%d\n",
+					__func__, prcv->idx, prcv->size);
 					return;
 				}
 
@@ -384,13 +384,11 @@ void fg_daemon_get_data(struct mtk_battery *gm, int cmd,
 	{
 		char *ptr;
 
-		if (prcv->idx + prcv->size >
-			sizeof(struct fuel_gauge_custom_data)) {
-			bm_err(gm, "%s size is different %d %d %d\n",
-			__func__,
-			(int)sizeof(
-			struct fuel_gauge_custom_data),
-			prcv->idx, prcv->size);
+		if (prcv->size > DATA_SIZE ||
+			prcv->idx >= sizeof(gm->fg_cust_data) ||
+			prcv->size > sizeof(gm->fg_cust_data) - prcv->idx) {
+			bm_err(gm, "%s invalid range idx:%d size:%d\n",
+			__func__, prcv->idx, prcv->size);
 			return;
 		}
 
@@ -422,13 +420,11 @@ void fg_daemon_get_data(struct mtk_battery *gm, int cmd,
 		{
 			char *ptr;
 
-			if (prcv->idx + prcv->size >
-				sizeof(struct fuel_gauge_table_custom_data)) {
-				bm_err(gm, "%s size is different %d %d %d\n",
-				__func__,
-				(int)sizeof(
-				struct fuel_gauge_table_custom_data),
-				prcv->idx, prcv->size);
+			if (prcv->size > DATA_SIZE ||
+				prcv->idx >= sizeof(gm->fg_table_cust_data) ||
+				prcv->size > sizeof(gm->fg_table_cust_data) - prcv->idx) {
+				bm_err(gm, "%s invalid range idx:%d size:%d\n",
+				__func__, prcv->idx, prcv->size);
 				return;
 			}
 
@@ -463,6 +459,15 @@ void fg_daemon_get_data(struct mtk_battery *gm, int cmd,
 				(int)sizeof(
 				struct ag_center_data_st),
 				prcv->total_size);
+				return;
+			}
+
+			if (prcv->size > DATA_SIZE ||
+				prcv->idx >= sizeof(gm->bh_data) ||
+				prcv->size > sizeof(gm->bh_data) - prcv->idx) {
+				bm_err(gm, "%s invalid range idx:%d size:%d\n",
+				__func__, prcv->idx, prcv->size);
+				return;
 			}
 
 			ptr = (char *)&gm->bh_data;
@@ -484,13 +489,11 @@ void fg_daemon_get_data(struct mtk_battery *gm, int cmd,
 		{
 			char *ptr;
 
-			if (prcv->idx + prcv->size >
-				sizeof(struct shutdown_data)) {
-				bm_err(gm, "%s size is different %d %d %d\n",
-				__func__,
-				(int)sizeof(
-				struct shutdown_data),
-				prcv->idx, prcv->size);
+			if (prcv->size > DATA_SIZE ||
+				prcv->idx >= sizeof(gm->sd_data) ||
+				prcv->size > sizeof(gm->sd_data) - prcv->idx) {
+				bm_err(gm, "%s invalid range idx:%d size:%d\n",
+				__func__, prcv->idx, prcv->size);
 				return;
 			}
 

@@ -52,7 +52,7 @@ static void mdw_cmd_delete_v2(struct mdw_cmd *c)
 	mdw_cmd_cmdbuf_out(mpriv, c);
 	mdw_cmd_delete_infos(c->mpriv, c);
 	list_del(&c->u_item);
-	mpriv->mdev->plat_funcs->release_cmd(mpriv);
+//	mpriv->mdev->plat_funcs->release_cmd(mpriv);
 	mutex_unlock(&mpriv->mtx);
 	mdw_mem_put(c->mpriv, c->exec_infos);
 	dma_fence_signal(f);

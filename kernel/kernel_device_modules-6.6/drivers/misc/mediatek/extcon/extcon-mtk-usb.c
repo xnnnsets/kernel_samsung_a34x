@@ -840,6 +840,32 @@ static int mtk_usb_extcon_probe(struct platform_device *pdev)
 
 static int mtk_usb_extcon_remove(struct platform_device *pdev)
 {
+	struct mtk_extcon_info *extcon = platform_get_drvdata(pdev);
+	struct device *dev = &pdev->dev;
+
+	device_remove_file(dev, &dev_attr_vbus_switch);
+	if (extcon->vbus_limit_cur)
+		device_remove_file(dev, &dev_attr_vbus_limit_cur);
+
+	power_supply_unreg_notifier(&extcon->psy_nb);
+
+#if IS_ENABLED(CONFIG_TCPC_CLASS)
+	if (extcon->tcpc_dev)
+		unregister_tcp_dev_notifier(extcon->tcpc_dev, &extcon->tcpc_nb,
+			TCP_NOTIFY_TYPE_USB | TCP_NOTIFY_TYPE_VBUS |
+			TCP_NOTIFY_TYPE_MISC);
+#endif
+
+	cancel_delayed_work_sync(&extcon->wq_psy);
+	cancel_delayed_work_sync(&extcon->wq_detcable);
+
+#if IS_ENABLED(CONFIG_TCPC_CLASS)
+	remove_proc_subtree(PROC_FILE_SMT, NULL);
+#endif
+
+	if (extcon->extcon_wq)
+		destroy_workqueue(extcon->extcon_wq);
+
 	return 0;
 }
 

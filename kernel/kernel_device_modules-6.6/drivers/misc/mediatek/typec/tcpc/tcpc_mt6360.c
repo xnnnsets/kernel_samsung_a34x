@@ -79,6 +79,9 @@ struct mt6360_chip {
 
 #if CONFIG_WATER_DETECTION
 	atomic_t wd_protect_rty;
+#if CONFIG_WD_DURING_PLUGGED_IN
+	atomic_t wd_polling_rty;
+#endif	/* CONFIG_WD_DURING_PLUGGED_IN */
 	bool wd_polling;
 	struct delayed_work usbid_evt_dwork;
 	struct delayed_work wd_dwork;
@@ -720,8 +723,11 @@ static irqreturn_t mt6360_pmu_usbid_evt_handler(int irq, void *data)
 {
 	struct mt6360_chip *chip = data;
 
-	mod_delayed_work(system_wq, &chip->usbid_evt_dwork,
-		msecs_to_jiffies(4000));
+#if CONFIG_WD_DURING_PLUGGED_IN
+	if (atomic_dec_if_positive(&chip->wd_polling_rty) < 0)
+#endif	/* CONFIG_WD_DURING_PLUGGED_IN */
+		mod_delayed_work(system_wq, &chip->usbid_evt_dwork,
+			msecs_to_jiffies(4000));
 	return IRQ_HANDLED;
 }
 #endif /* CONFIG_WATER_DETECTION */
@@ -1182,6 +1188,7 @@ static int mt6360_set_low_power_mode(struct tcpc_device *tcpc, bool en,
 
 	if (tcpc->tcpc_flags & TCPC_FLAGS_WATER_DETECTION) {
 #if CONFIG_WD_DURING_PLUGGED_IN
+		atomic_set(&chip->wd_polling_rty, 0);
 		if (en)
 			ret = mt6360_enable_usbid_polling(chip, en);
 #else
@@ -1691,6 +1698,15 @@ static int mt6360_is_water_detected(struct tcpc_device *tcpc)
 		}
 	}
 
+#if CONFIG_WD_DURING_PLUGGED_IN
+	if (tcpci_is_plugged_in(chip->tcpc) &&
+	    usbid >= 550 && usbid <= 650) {
+		atomic_set(&chip->wd_polling_rty, 2);
+		ret = 0;
+		goto out;
+	}
+#endif	/* CONFIG_WD_DURING_PLUGGED_IN */
+
 #if CONFIG_CABLE_TYPE_DETECTION
 	cable_type = tcpc->typec_cable_type;
 	if (cable_type == TCPC_CABLE_TYPE_NONE) {
@@ -1707,6 +1723,13 @@ static int mt6360_is_water_detected(struct tcpc_device *tcpc)
 			ret = 0;
 			goto out;
 		}
+#if CONFIG_WD_DURING_PLUGGED_IN
+		if (tcpci_is_plugged_in(chip->tcpc) &&
+		    usbid >= 550 && usbid <= 600) {
+			ret = 0;
+			goto out;
+		}
+#endif	/* CONFIG_WD_DURING_PLUGGED_IN */
 	}
 #endif /* CONFIG_CABLE_TYPE_DETECTION */
 
@@ -2463,6 +2486,9 @@ static int mt6360_tcpc_probe(struct i2c_client *client)
 
 #if CONFIG_WATER_DETECTION
 	atomic_set(&chip->wd_protect_rty, CONFIG_WD_PROTECT_RETRY_COUNT);
+#if CONFIG_WD_DURING_PLUGGED_IN
+	atomic_set(&chip->wd_polling_rty, 0);
+#endif	/* CONFIG_WD_DURING_PLUGGED_IN */
 	INIT_DELAYED_WORK(&chip->usbid_evt_dwork,
 		mt6360_pmu_usbid_evt_dwork_handler);
 	INIT_DELAYED_WORK(&chip->cc_hi_check_work,

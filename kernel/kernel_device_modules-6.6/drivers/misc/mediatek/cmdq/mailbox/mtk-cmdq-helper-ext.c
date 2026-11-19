@@ -3693,8 +3693,7 @@ s32 cmdq_pkt_flush_async(struct cmdq_pkt *pkt,
 	u32 hwid = cmdq_util_get_hw_id(check_gce_pa);
 	s32 thread_id = cmdq_mbox_chan_id(client->chan);
 
-	if(hwid == DIS_GCE_HW_ID && (thread_id == DIS_COFING_AC_THREAD_ID))
-	{
+	if(hwid == DIS_GCE_HW_ID && (thread_id == DIS_COFING_AC_THREAD_ID)) {
 		disp_err_cb = item->err_cb;
 		disp_data = item->err_data;
 	}

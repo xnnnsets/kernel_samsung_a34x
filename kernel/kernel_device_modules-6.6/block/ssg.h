@@ -73,6 +73,10 @@ struct ssg_data {
 	 */
 	void __percpu *stats;
 
+	u64 inflight_start_ns;
+	u64 inflight_total_ns;
+	spinlock_t inflight_time_lock;
+
 	spinlock_t lock;
 	struct list_head dispatch;
 

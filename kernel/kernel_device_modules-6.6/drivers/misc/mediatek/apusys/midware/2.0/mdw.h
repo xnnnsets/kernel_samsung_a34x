@@ -323,6 +323,7 @@ struct mdw_fpriv {
 	uint32_t counter;
 
 	uint64_t id;
+	bool skip_lock;
 };
 
 struct mdw_exec_info {
@@ -354,7 +355,7 @@ struct mdw_cmd_map_invoke {
 
 struct mdw_cmd_history_tbl {
 	/* history basic struct */
-	uint64_t uid;
+	uint64_t kid;
 	struct list_head ch_tbl_node; //to mpriv
 	uint64_t period_cnt;
 	uint32_t num_subcmds;

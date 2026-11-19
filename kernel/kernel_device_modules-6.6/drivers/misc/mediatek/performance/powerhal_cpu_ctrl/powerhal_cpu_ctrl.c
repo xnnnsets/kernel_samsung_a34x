@@ -72,8 +72,12 @@ static const struct proc_ops perfmgr_ ## name ## _proc_fops = { \
 			pr_debug(fmt, ##x); \
 	} while (0)
 
+#ifndef MAX
 #define MAX(a, b) (((a) > (b)) ? (a) : (b))
+#endif
+#ifndef MIN
 #define MIN(a, b) (((a) < (b)) ? (a) : (b))
+#endif
 
 #define CLUSTER_MAX 10
 #define CORE_MAX 8

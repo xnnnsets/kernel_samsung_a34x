@@ -21,6 +21,7 @@
 
 #define HUGEPAGE_ORDER	HPAGE_PMD_ORDER
 #define HPP_FPI_MAGIC	((__force int __bitwise)BIT(31))
+#define BUDDY_PEEKING_BACKOFF_MS 1000
 
 struct task_struct *khppd_task;
 
@@ -56,6 +57,8 @@ static spinlock_t hugepage_nonzero_list_lock[MAX_NR_ZONES];
 static unsigned long hugepage_avail_low[MAX_NR_ZONES];
 /* fill pool if available memory is above this value */
 static unsigned long hugepage_avail_high[MAX_NR_ZONES];
+
+static atomic_long_t buddy_peeking_backoff_until = ATOMIC_LONG_INIT(0);
 
 static unsigned long get_zone_nr_hugepages(int zidx)
 {
@@ -185,15 +188,21 @@ static inline gfp_t get_gfp(enum zone_type zidx)
 	return ret & ~__GFP_RECLAIM;
 }
 
-bool insert_hugepage_pool(struct page *page)
+static void insert_hugepage_pool(struct page *page, unsigned int order, bool *skip)
 {
 	enum zone_type zidx = page_zonenum(page);
 
+	if (order != HUGEPAGE_ORDER)
+		return;
+
+	if (is_migrate_cma_or_isolate_page(page))
+		return;
+
 	if (hpp_state == HPP_OFF)
-		return false;
+		return;
 
 	if (get_zone_nr_hugepages(zidx) >= nr_hugepages_quota[zidx])
-		return false;
+		return;
 
 	/*
 	 * note that, at this point, the page is in the free page state except
@@ -204,7 +213,7 @@ bool insert_hugepage_pool(struct page *page)
 	nr_hugepages_nonzero[zidx]++;
 	spin_unlock(&hugepage_nonzero_list_lock[zidx]);
 
-	return true;
+	*skip = true;
 }
 
 static void zeroing_nonzero_list(enum zone_type zidx)
@@ -380,7 +389,7 @@ static struct page *alloc_zeroed_hugepage(gfp_t gfp,
 
 got_page:
 	nr_hugepages_alloced[zidx]++;
-	if (gfp & __GFP_COMP)                       
+	if (gfp & __GFP_COMP)
 		prep_compound_page(page, HUGEPAGE_ORDER);
 	return page;
 }
@@ -562,11 +571,73 @@ static void hpp_meminfo_adjust(void *data, unsigned long *totalram, unsigned lon
 	*freeram += total_hugepage_pool_pages();
 }
 
+static const int migratetypes_to_peek[4] = {
+	MIGRATE_MOVABLE,
+	MIGRATE_UNMOVABLE,
+	MIGRATE_RECLAIMABLE,
+	MIGRATE_CMA,
+};
+
+static bool suitable_hpage_exists_in_buddy(gfp_t gfp, enum zone_type highest_zoneidx)
+{
+	struct pglist_data *pgdat = &contig_page_data;
+	int nr_migratetypes_to_peek = 3;
+	int zidx, midx;
+
+	if (time_before(jiffies,
+			(unsigned long)atomic_long_read(&buddy_peeking_backoff_until)))
+		return false;
+
+#ifdef CONFIG_CMA
+	if (gfp & __GFP_CMA)
+		nr_migratetypes_to_peek++;
+#endif
+
+	for (zidx = (int)highest_zoneidx; zidx >= 0; zidx--) {
+		struct zone *zone = &pgdat->node_zones[zidx];
+		struct free_area *area_hpage;
+
+		if (!zone_managed_pages(zone))
+			continue;
+
+		area_hpage = &zone->free_area[HUGEPAGE_ORDER];
+		if (!READ_ONCE(area_hpage->nr_free))
+			continue;
+
+		for (midx = 0; midx < nr_migratetypes_to_peek; midx++) {
+			int migratetype_to_peek = migratetypes_to_peek[midx];
+			struct list_head *list_to_peek = &area_hpage->free_list[migratetype_to_peek];
+
+			if (!list_empty(list_to_peek))
+				return true;
+		}
+	}
+
+	atomic_long_set(&buddy_peeking_backoff_until,
+		jiffies + msecs_to_jiffies(BUDDY_PEEKING_BACKOFF_MS));
+	return false;
+}
+
 static void hpp_try_alloc_pages_gfp(void *data, struct page **page,
 		unsigned int order, gfp_t gfp, enum zone_type highest_zoneidx)
 {
-	if (order == HUGEPAGE_ORDER && !in_atomic())
+	if (order == HUGEPAGE_ORDER && !in_atomic()) {
+		if (suitable_hpage_exists_in_buddy(gfp, highest_zoneidx))
+			return;
 		*page = alloc_zeroed_hugepage(gfp, highest_zoneidx);
+	}
+}
+
+static void hpp_free_page_bypass(void *data, struct page *page,
+		unsigned int order, bool *skip_free_page)
+{
+	insert_hugepage_pool(page, order, skip_free_page);
+}
+
+static void hpp_free_folio_bypass(void *data, struct folio *folio,
+		unsigned int order, bool *skip_free_folio)
+{
+	insert_hugepage_pool(&folio->page, order, skip_free_folio);
 }
 
 static void hpp_free_pages_prepare_bypass(void *data, struct page *page,
@@ -585,10 +656,7 @@ static void hpp_free_pages_ok_bypass(void *data, struct page *page,
 {
 	if (fpi_flags == HPP_FPI_MAGIC)
 		return;
-	if (is_migrate_cma_or_isolate_page(page))
-		return;
-	if (order == HUGEPAGE_ORDER && insert_hugepage_pool(page))
-		*bypass = true;
+	insert_hugepage_pool(page, order, bypass);
 }
 
 static void hpp_dmabuf_page_pool_free_bypass(void *data,
@@ -686,6 +754,10 @@ static int __init hpp_init(void)
 	register_trace_android_vh_si_mem_available_adjust(
 			hpp_available_adjust, NULL);
 	register_trace_android_vh_si_meminfo_adjust(hpp_meminfo_adjust, NULL);
+	register_trace_android_vh_free_page_bypass(
+			hpp_free_page_bypass, NULL);
+	register_trace_android_vh_free_folio_bypass(
+			hpp_free_folio_bypass, NULL);
 	register_trace_android_vh_free_pages_prepare_bypass(
 			hpp_free_pages_prepare_bypass, NULL);
 	register_trace_android_vh_free_pages_ok_bypass(
@@ -714,6 +786,10 @@ static void __exit hpp_exit(void)
 	unregister_trace_android_vh_si_mem_available_adjust(
 			hpp_available_adjust, NULL);
 	unregister_trace_android_vh_si_meminfo_adjust(hpp_meminfo_adjust, NULL);
+	unregister_trace_android_vh_free_page_bypass(
+			hpp_free_page_bypass, NULL);
+	unregister_trace_android_vh_free_folio_bypass(
+			hpp_free_folio_bypass, NULL);
 	unregister_trace_android_vh_free_pages_prepare_bypass(
 			hpp_free_pages_prepare_bypass, NULL);
 	unregister_trace_android_vh_free_pages_ok_bypass(

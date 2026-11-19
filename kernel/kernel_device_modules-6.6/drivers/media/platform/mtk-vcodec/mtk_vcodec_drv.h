@@ -1015,6 +1015,7 @@ struct mtk_vcodec_dev {
 	unsigned int svp_mtee;
 
 	struct freq_qos_request *freq_min_request;
+	int freq_min_request_num;
 };
 
 static inline struct mtk_vcodec_ctx *fh_to_ctx(struct v4l2_fh *fh)

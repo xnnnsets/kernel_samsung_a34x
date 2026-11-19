@@ -397,7 +397,6 @@ static int mtk_compr_offload_open(struct snd_soc_component *component,
 			 0,
 			 0,
 			 NULL);
-	offload_stream = stream;
 
 	if (dsp == NULL) {
 		dsp = (struct mtk_base_dsp *)get_dsp_base();
@@ -436,7 +435,7 @@ static int mtk_compr_offload_open(struct snd_soc_component *component,
 			 gen_pool_size(
 			 dsp->dsp_mem[ID].gen_pool_buffer));
 	}
-
+	offload_stream = stream;
 	afe_offload_service.vp_sync_support = adsp_task_get_latency_support();
 
 	return 0;
@@ -484,6 +483,9 @@ static int mtk_compr_offload_free(struct snd_soc_component *component,
 	}
 
 	offloadservice_setwriteblocked(false);
+
+	if (offload_stream == stream)
+		offload_stream = NULL;
 
 	if (dsp)
 		mtk_adsp_genpool_free_sharemem_ring(&dsp->dsp_mem[ID], ID);

@@ -65,6 +65,7 @@ static int trip_temp[10] = { 120000, 110000, 100000, 90000, 80000,
 
 static struct thermal_zone_device *thz_dev;
 static int mtkts_bts_debug_log;
+
 static int kernelmode;
 static int g_THERMAL_TRIP[10] = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
 static struct thermal_trip trips[10];
@@ -94,6 +95,9 @@ static int polling_factor2 = 10000;
 
 int bts_cur_temp = 1;
 
+static const int temperature_threshold[] = {43000, 45000, 50000, 70000, 80000, 90000};
+#define SKIN_TRIP_NUM  (ARRAY_SIZE(temperature_threshold))
+static int last_skin_level;
 
 #define MTKTS_BTS_TEMP_CRIT 60000	/* 60.000 degree Celsius */
 
@@ -728,9 +732,54 @@ int mtkts_bts_get_hw_temp(void)
 	return t_ret;
 }
 
+static int skin_temp_to_level(int temp)
+{
+	int i;
+
+	for (i = SKIN_TRIP_NUM - 1; i >= 0; i--) {
+		if (temp >= temperature_threshold[i])
+			return i + 1;
+	}
+	return 0;
+}
+
 static int mtkts_bts_get_temp(struct thermal_zone_device *thermal, int *t)
 {
+	char *thermal_prop[] = {
+		NULL,	/* NAME */
+		NULL,	/* TEMP */
+		NULL,	/* TRIP */
+		NULL,	/* EVENT */
+		NULL	/* terminator for kobject_uevent_env() */
+	};
+	const int prop_count = ARRAY_SIZE(thermal_prop) - 1;
+	int i, trip_level;
+
 	*t = mtkts_bts_get_hw_temp();
+
+	trip_level = skin_temp_to_level(*t);
+
+	if (trip_level != last_skin_level) {
+		thermal_prop[0] = kasprintf(GFP_KERNEL, "NAME=%s", "SKIN");
+		thermal_prop[1] = kasprintf(GFP_KERNEL, "TEMP=%d", thermal->temperature);
+		thermal_prop[2] = kasprintf(GFP_KERNEL, "TRIP=%d", trip_level);
+		thermal_prop[3] = kasprintf(GFP_KERNEL, "EVENT=%d", thermal->notify_event);
+
+		for (i = 0; i < prop_count; i++) {
+			if (!thermal_prop[i]) {
+				mtkts_bts_printk("MTK_TES_BTS: Failed to allocate thermal_prop[%d]\n", i);
+				goto cleanup;
+			}
+		}
+
+		kobject_uevent_env(&thermal->device.kobj, KOBJ_CHANGE, thermal_prop);
+
+		last_skin_level = trip_level;
+
+cleanup:
+		for (i = 0; i < prop_count; i++)
+			kfree(thermal_prop[i]);
+	}
 
 	/* if ((int) *t > 52000) */
 	/* mtkts_bts_dprintk("T=%d\n", (int) *t); */

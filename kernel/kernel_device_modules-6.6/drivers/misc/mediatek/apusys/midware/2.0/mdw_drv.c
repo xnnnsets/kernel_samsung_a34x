@@ -26,8 +26,9 @@ static void mdw_drv_priv_delete(struct kref *ref)
 	struct mdw_fpriv *mpriv =
 			container_of(ref, struct mdw_fpriv, ref);
 
-	mdw_drv_debug("mpriv(0x%llx) free\n", mpriv->id);
+	mdw_flw_debug("mpriv(0x%llx) free\n", mpriv->id);
 	mdw_dev_session_delete(mpriv);
+
 	kfree(mpriv);
 }
 
@@ -74,7 +75,6 @@ static int mdw_drv_open(struct inode *inode, struct file *filp)
 	INIT_LIST_HEAD(&mpriv->mems);
 	INIT_LIST_HEAD(&mpriv->invokes);
 	INIT_LIST_HEAD(&mpriv->ch_list);
-	atomic_set(&mpriv->active_cmds, 0);
 	idr_init(&mpriv->cmds);
 	INIT_LIST_HEAD(&mpriv->cmds_list);
 	atomic_set(&mpriv->exec_seqno, 0);
@@ -82,6 +82,7 @@ static int mdw_drv_open(struct inode *inode, struct file *filp)
 	mpriv->get = mdw_drv_priv_get;
 	mpriv->put = mdw_drv_priv_put;
 	kref_init(&mpriv->ref);
+	mpriv->skip_lock = false;
 
 	if (!atomic_read(&g_inited)) {
 		ret = mdw_dev->plat_funcs->sw_init(mdw_dev);
@@ -122,7 +123,6 @@ static int mdw_drv_close(struct inode *inode, struct file *filp)
 	mpriv = filp->private_data;
 	mdw_flw_debug("mpriv(0x%llx)\n", mpriv->id);
 	mutex_lock(&mpriv->mtx);
-	atomic_set(&mpriv->active, 0);
 	mpriv->mdev->plat_funcs->release_cmd(mpriv);
 	mdw_mem_pool_destroy(&mpriv->cmd_buf_pool);
 	mutex_unlock(&mpriv->mtx);

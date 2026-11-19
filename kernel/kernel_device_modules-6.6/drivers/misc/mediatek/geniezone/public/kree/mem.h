@@ -101,6 +101,20 @@ struct KREE_SHM_RUNLENGTH_LIST {
 	struct KREE_SHM_RUNLENGTH_LIST *next;
 };
 
+struct shm_tracker {
+	uint32_t handle; //mTEE return shm_handle
+	int is_page; // 1 for malloc/VA, 0 for dmabuf
+
+	// for dmabuf path
+	struct {
+		struct dma_buf *dbuf;
+		struct dma_buf_attachment *attach;
+		struct sg_table *sgt;
+	} dmabuf_info;
+};
+void unregister_shm_by_handle(uint32_t shm_handle);
+int register_shm_tracker(struct shm_tracker *tracker, uint32_t shm_handle);
+void release_shmtracker_resources(struct shm_tracker *tracker);
 
 /**
  * Shared memory

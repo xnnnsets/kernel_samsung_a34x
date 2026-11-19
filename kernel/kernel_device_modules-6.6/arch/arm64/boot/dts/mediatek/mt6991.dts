@@ -10081,7 +10081,7 @@ sw_info,frame_id,custom,pipeline_stage,RPID,UID";
 			ccorr-num-per-pipe = <2>;
 			ccorr-linear-per-pipe = <0x01>;
 			ccorr-linear = <1>;
-			doze-bypass = <0x10001>;
+			doze-bypass = <1>;
 		};
 
 		disp_ccorr1: disp-ccorr1@320a0000 {
@@ -10093,7 +10093,7 @@ sw_info,frame_id,custom,pipeline_stage,RPID,UID";
 			ccorr-num-per-pipe = <2>;
 			ccorr-linear-per-pipe = <0x01>;
 			ccorr-linear = <0>;
-			doze-bypass = <0x10001>;
+			doze-bypass = <1>;
 		};
 
 		disp_ccorr2: disp-ccorr2@320b0000 {
@@ -10105,7 +10105,7 @@ sw_info,frame_id,custom,pipeline_stage,RPID,UID";
 			ccorr-num-per-pipe = <2>;
 			ccorr-linear-per-pipe = <0x01>;
 			ccorr-linear = <1>;
-			doze-bypass = <0x10001>;
+			doze-bypass = <1>;
 		};
 
 		disp_ccorr3: disp-ccorr3@320c0000 {
@@ -10117,7 +10117,7 @@ sw_info,frame_id,custom,pipeline_stage,RPID,UID";
 			ccorr-num-per-pipe = <2>;
 			ccorr-linear-per-pipe = <0x01>;
 			ccorr-linear = <0>;
-			doze-bypass = <0x10001>;
+			doze-bypass = <1>;
 		};
 
 		disp_c3d0: disp-c3d0@32050000 {
@@ -15028,7 +15028,7 @@ connsys_emi_config_hyp: connsys-emi-config-hyp {
 		<0x0>, /* mbox1 */
 		<0x0>, /* mbox2 */
 		<0x0>, /* mbox3 */
-		<0x4000>, /* mbox4, for AOV, IRQF_NO_SUSPEND */
+		<0x0>, /* mbox4 */
 		<0x0>; /* mbox5 */
 
 		core-0 = "enable";
@@ -20885,6 +20885,7 @@ connsys_emi_config_hyp: connsys-emi-config-hyp {
 			#phy-cells = <0>;
 			mediatek,rx-sqth = <0x5>;
 			mediatek,pre-emphasis = <0x4>;
+			mediatek,host-rx-sqth = <0x0>;
 			mediatek,usb20-fs-sr = <0x7>;
 			mediatek,eusb20-fsrx-hys-sel = <0x0>;
 			status = "okay";

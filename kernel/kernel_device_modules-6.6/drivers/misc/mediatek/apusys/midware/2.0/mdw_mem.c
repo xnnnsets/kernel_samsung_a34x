@@ -103,7 +103,6 @@ static void mdw_mem_release(struct mdw_mem *m, bool put_mpriv)
 	struct mdw_fpriv *mpriv = m->mpriv;
 
 	mdw_mem_show(m);
-
 	mutex_lock(&mdev->m_mtx);
 	list_del(&m->d_node);
 	mutex_unlock(&mdev->m_mtx);
@@ -112,6 +111,7 @@ static void mdw_mem_release(struct mdw_mem *m, bool put_mpriv)
 		list_del(&m->u_item);
 
 	kfree(m);
+	m = NULL;
 
 	if (put_mpriv == true)
 		mpriv->put(mpriv);
@@ -141,6 +141,7 @@ static struct mdw_mem *mdw_mem_create(struct mdw_fpriv *mpriv)
 		m->pool = NULL;
 		m->id = hash_ptr(m, 64);
 		INIT_LIST_HEAD(&m->p_chunk);
+		INIT_LIST_HEAD(&m->d_node);
 		mutex_init(&m->mtx);
 		INIT_LIST_HEAD(&m->maps);
 		mdw_mem_show(m);
@@ -264,6 +265,7 @@ struct mdw_mem *mdw_mem_alloc(struct mdw_fpriv *mpriv, enum mdw_mem_type type,
 	goto out;
 
 delete_mem:
+	m->mpriv->put(m->mpriv);
 	/* delete mem struct */
 	kfree(m);
 	m = NULL;
@@ -658,14 +660,13 @@ int mdw_mem_unmap(struct mdw_fpriv *mpriv, struct mdw_mem *m)
 	mdw_mem_show(m);
 	m_invoke = mdw_mem_invoke_find(mpriv, m);
 	if (m_invoke == NULL) {
-		mdw_drv_warn("s(0x%llx) no invoke m(0x%llx)\n",
+		mdw_drv_err("s(0x%llx) no invoke m(0x%llx)\n",
 			mpriv->id, (uint64_t)m);
 		ret = -EINVAL;
 		goto out;
 	}
 
 	m_invoke->put(m_invoke);
-
 out:
 	return ret;
 }
@@ -805,6 +806,7 @@ static int mdw_mem_ioctl_map(struct mdw_fpriv *mpriv,
 
 	mutex_lock(&mpriv->mtx);
 	mutex_lock(&mpriv->mdev->mctl_mtx);
+	mpriv->skip_lock = true;
 
 	/* query mem from apu's mem list */
 	m = mdw_mem_get_by_dbuf(mpriv, dbuf);
@@ -824,6 +826,7 @@ static int mdw_mem_ioctl_map(struct mdw_fpriv *mpriv,
 		mdw_mem_put(mpriv, m);
 	}
 
+	m->mpriv->skip_lock = true;
 	/* Compare user input addr with memory addr */
 	m_highaddr = (m->flags & F_MDW_MEM_HIGHADDR) ? true : false;
 	if (in_highaddr != m_highaddr) {
@@ -852,14 +855,18 @@ static int mdw_mem_ioctl_map(struct mdw_fpriv *mpriv,
 	goto out;
 
 delete_mem:
+	m->mpriv->put(m->mpriv);
 	kfree(m);
 	m = NULL;
 out:
 	if (m) {
 		args->out.map.device_va = m->device_va;
 		args->out.map.type = m->type;
+		if (m->mpriv)
+			m->mpriv->skip_lock = false;
 	}
 	dma_buf_put(dbuf);
+	mpriv->skip_lock = false;
 	mutex_unlock(&mpriv->mdev->mctl_mtx);
 	mutex_unlock(&mpriv->mtx);
 	if (ret || !m)
@@ -879,6 +886,7 @@ static int mdw_mem_ioctl_unmap(struct mdw_fpriv *mpriv,
 
 	mutex_lock(&mpriv->mtx);
 	mutex_lock(&mpriv->mdev->mctl_mtx);
+	mpriv->skip_lock = true;
 	m = mdw_mem_get(mpriv, handle);
 	if (!m)
 		goto out;
@@ -886,9 +894,11 @@ static int mdw_mem_ioctl_unmap(struct mdw_fpriv *mpriv,
 		mdw_mem_put(mpriv, m);
 
 	mdw_mem_show(m);
+	m->mpriv->skip_lock = true;
 	ret = mdw_mem_unmap(mpriv, m);
 
 out:
+	mpriv->skip_lock = false;
 	mutex_unlock(&mpriv->mdev->mctl_mtx);
 	mutex_unlock(&mpriv->mtx);
 	if (ret)

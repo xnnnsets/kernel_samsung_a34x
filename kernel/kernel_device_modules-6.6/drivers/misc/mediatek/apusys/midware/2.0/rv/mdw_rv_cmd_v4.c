@@ -351,12 +351,14 @@ reuse:
 
 	/* update histroy ip time */
 	rmsc = (void *)rmc + rmc->subcmds_offset;
+	mutex_lock(&c->mpriv->ch_mtx);
 	ch_tbl = mdw_cmd_ch_tbl_find(c);
 	for (i = 0; i < c->num_subcmds; i++) {
 		if (ch_tbl)
 			rmsc[i].history_ip_time = ch_tbl->h_sc_einfo[i].ip_time;
 		mdw_rv_sc_print(&rmsc[i], rmc->cmd_id, i);
 	}
+	mutex_unlock(&c->mpriv->ch_mtx);
 
 	if (mdw_mem_flush(mpriv, rc->cb))
 		mdw_drv_warn("s(0x%llx) c(0x%llx/0x%llx) flush rv cbs(%llu) fail\n",

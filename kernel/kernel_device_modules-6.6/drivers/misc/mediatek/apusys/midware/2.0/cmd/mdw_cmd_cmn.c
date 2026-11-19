@@ -413,6 +413,26 @@ void mdw_cmd_history_reset(struct mdw_fpriv *mpriv)
 	mutex_unlock(&mdev->h_mtx);
 }
 
+static void mdw_cmd_history_tbl_node_delete(struct mdw_cmd *c)
+{
+	struct mdw_cmd_history_tbl *ch_tbl = NULL, *tmp = NULL;
+
+	mutex_lock(&c->mpriv->ch_mtx);
+	list_for_each_entry_safe(ch_tbl, tmp, &c->mpriv->ch_list, ch_tbl_node) {
+		if (ch_tbl->kid == c->kid) {
+			list_del(&ch_tbl->ch_tbl_node);
+			mdw_cmd_debug("s(0x%llx) kid(0x%llx) delete old ch_tbl\n",
+				c->mpriv->id, ch_tbl->kid);
+			kfree(ch_tbl->h_sc_einfo);
+			kfree(ch_tbl);
+			break;
+		}
+	}
+	mutex_unlock(&c->mpriv->ch_mtx);
+
+	//mdw_cmd_history_reset(mpriv);
+}
+
 static void mdw_cmd_history_tbl_delete(struct mdw_fpriv *mpriv)
 {
 	struct mdw_cmd_history_tbl *ch_tbl = NULL, *tmp = NULL;
@@ -420,8 +440,8 @@ static void mdw_cmd_history_tbl_delete(struct mdw_fpriv *mpriv)
 	mutex_lock(&mpriv->ch_mtx);
 	list_for_each_entry_safe(ch_tbl, tmp, &mpriv->ch_list, ch_tbl_node) {
 		list_del(&ch_tbl->ch_tbl_node);
-		mdw_cmd_debug("s(0x%llx) uid(0x%llx) delete ch_tbl\n",
-			mpriv->id, ch_tbl->uid);
+		mdw_cmd_debug("s(0x%llx) kid(0x%llx) delete ch_tbl\n",
+			mpriv->id, ch_tbl->kid);
 		kfree(ch_tbl->h_sc_einfo);
 		kfree(ch_tbl);
 	}
@@ -433,25 +453,29 @@ static void mdw_cmd_history_tbl_delete(struct mdw_fpriv *mpriv)
 void mdw_cmd_mpriv_release(struct mdw_fpriv *mpriv)
 {
 	struct mdw_cmd *c = NULL;
-	uint32_t id = 0;
+	int id = 0;
 
-	if (!atomic_read(&mpriv->active) && !atomic_read(&mpriv->active_cmds)) {
-		mdw_flw_debug("s(0x%llx) release cmd\n", mpriv->id);
-		idr_for_each_entry(&mpriv->cmds, c, id) {
-			idr_remove(&mpriv->cmds, id);
-			mdw_cmd_delete(c);
-		}
-		mdw_flw_debug("s(0x%llx) release mem\n", mpriv->id);
+	mdw_flw_debug("s(0x%llx) release cmd\n", mpriv->id);
+	idr_for_each_entry(&mpriv->cmds, c, id) {
+		idr_remove(&mpriv->cmds, id);
+		mdw_cmd_delete(c);
+	}
+
+	mdw_flw_debug("s(0x%llx) release mem\n", mpriv->id);
+	if (mpriv->skip_lock == true) {
+		mdw_mem_mpriv_release(mpriv);
+	} else {
 		mutex_lock(&mpriv->mdev->mctl_mtx);
 		mdw_mem_mpriv_release(mpriv);
 		mutex_unlock(&mpriv->mdev->mctl_mtx);
-		mdw_flw_debug("s(0x%llx) release apummu table\n", mpriv->id);
-		mdw_trace_begin("apummu:table_free|s:0x%llx", mpriv->id);
-		apu_mem_table_free(mpriv->id);
-		mdw_trace_end();
-		mdw_flw_debug("s(0x%llx) release history tbl\n", mpriv->id);
-		mdw_cmd_history_tbl_delete(mpriv);
 	}
+
+	mdw_flw_debug("s(0x%llx) release apummu table\n", mpriv->id);
+	mdw_trace_begin("apummu:table_free|s:0x%llx", mpriv->id);
+	apu_mem_table_free(mpriv->id);
+	mdw_trace_end();
+	mdw_flw_debug("s(0x%llx) release history tbl\n", mpriv->id);
+	mdw_cmd_history_tbl_delete(mpriv);
 }
 
 //--------------------------------------------
@@ -612,6 +636,7 @@ static void mdw_cmd_release(struct kref *ref)
 	mutex_lock(&mpriv->mdev->mctl_mtx);
 	mdw_cmd_unvoke_map(c);
 	mutex_unlock(&mpriv->mdev->mctl_mtx);
+	mdw_cmd_history_tbl_node_delete(c);
 	mdw_cmd_delete_infos(c->mpriv, c);
 	mdw_mem_put(c->mpriv, c->exec_infos);
 	kfree(c->adj_matrix);

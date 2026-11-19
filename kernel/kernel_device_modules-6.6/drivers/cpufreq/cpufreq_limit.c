@@ -35,8 +35,6 @@
 
 #define MAX_BUF_SIZE 1024
 #define LIMIT_RELEASE -1
-#define MIN(a, b)     (((a) < (b)) ? (a) : (b))
-#define MAX(a, b)     (((a) > (b)) ? (a) : (b))
 
 static struct freq_qos_request *max_req[DVFS_MAX_ID];
 static struct freq_qos_request *min_req[DVFS_MAX_ID];
@@ -166,6 +164,7 @@ static int cpufreq_limit_get_mid_boost(int freq)
 	for (i = 0; i < param.mid_boost_map_size; i++)
 		if (freq >= param.mid_boost_map[i].in)
 			return param.mid_boost_map[i].out;
+
 	return freq;
 }
 
@@ -188,6 +187,7 @@ static int cpufreq_limit_get_ltl_boost(int freq)
 	for (i = 0; i < param.boost_map_size; i++)
 		if (freq >= param.ltl_boost_map[i].in)
 			return param.ltl_boost_map[i].out;
+
 	return freq * param.ltl_divider;
 }
 #endif
@@ -414,7 +414,7 @@ static void cpufreq_limit_process_over_limit(unsigned int id, bool need_update_u
 		} else {
 			b_max = MIN(new_user_max, param.b_fmax);
 #if IS_ENABLED(CONFIG_CPU_FREQ_MID_LIMIT)
-			m_max = MIN(new_user_max, param.m_fmax);
+			m_max = cpufreq_limit_get_mid_limit(new_user_max);
 #endif
 		}
 #if IS_ENABLED(CONFIG_CPU_FREQ_MID_LIMIT)
@@ -502,7 +502,7 @@ static void cpufreq_limit_process_min_freq(unsigned int id, int min_freq)
 #if IS_ENABLED(CONFIG_CPU_FREQ_MID_LIMIT)
 		l_min = cpufreq_limit_get_ltl_boost(min_freq);
 		m_min = cpufreq_limit_get_mid_boost(min_freq);
-		if (min_freq > param.ltl_max_freq) {
+		if (min_freq > param.big_min_freq) {
 			b_min = MIN(min_freq, param.b_fmax);
 		} else {
 			b_min = param.b_fmin;
@@ -1046,6 +1046,11 @@ static int cpufreq_limit_parse_dt(struct device_node *np)
 	of_get_property(np, "ltl_limit_table", &val);
 	if (val) {
 		param.ltl_limit_map = kcalloc(1, val, GFP_KERNEL);
+		if(!param.ltl_limit_map) {
+			pr_err("%s: fail to kcalloc for param.ltl_limit_map\n", __func__);
+			return -ENOMEM;
+		}
+
 		of_property_read_u32_array(np, "ltl_limit_table",
 				(u32 *)param.ltl_limit_map, val / sizeof(u32));
 		param.limit_map_size = val / sizeof(*param.ltl_limit_map);
@@ -1057,6 +1062,11 @@ static int cpufreq_limit_parse_dt(struct device_node *np)
 	of_get_property(np, "ltl_boost_table", &val);
 	if (val) {
 		param.ltl_boost_map = kcalloc(1, val, GFP_KERNEL);
+		if(!param.ltl_boost_map) {
+			pr_err("%s: fail to kcalloc for param.ltl_boost_map\n", __func__);
+			return -ENOMEM;
+		}
+
 		of_property_read_u32_array(np, "ltl_boost_table",
 				(u32 *)param.ltl_boost_map, val / sizeof(u32));
 		param.boost_map_size = val / sizeof(*param.ltl_boost_map);
@@ -1066,6 +1076,11 @@ static int cpufreq_limit_parse_dt(struct device_node *np)
 	of_get_property(np, "mid_limit_table", &val);
 	if (val) {
 		param.mid_limit_map = kcalloc(1, val, GFP_KERNEL);
+		if(!param.mid_limit_map) {
+			pr_err("%s: fail to kcalloc for param.mid_limit_map\n", __func__);
+			return -ENOMEM;
+		}
+
 		of_property_read_u32_array(np, "mid_limit_table",
 				(u32 *)param.mid_limit_map, val / sizeof(u32));
 		param.mid_limit_map_size = val / sizeof(*param.mid_limit_map);
@@ -1075,6 +1090,11 @@ static int cpufreq_limit_parse_dt(struct device_node *np)
 	of_get_property(np, "mid_boost_table", &val);
 	if (val) {
 		param.mid_boost_map = kcalloc(1, val, GFP_KERNEL);
+		if(!param.mid_boost_map) {
+			pr_err("%s: fail to kcalloc for param.mid_boost_map\n", __func__);
+			return -ENOMEM;
+		}
+
 		of_property_read_u32_array(np, "mid_boost_table",
 				(u32 *)param.mid_boost_map, val / sizeof(u32));
 		param.mid_boost_map_size = val / sizeof(*param.mid_boost_map);

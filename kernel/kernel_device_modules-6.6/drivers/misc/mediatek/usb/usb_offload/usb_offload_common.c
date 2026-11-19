@@ -2710,7 +2710,7 @@ static int usb_offload_open(struct inode *ip, struct file *fp)
 	struct usb_host_config *config;
 
 	int err = 0;
-	int i, class, vid, pid;
+	int i, class, vid, pid, intf_idx;
 
 	mutex_lock(&uodev->dev_lock);
 	if (!buf_dcbaa || !buf_ctx || !buf_seg) {
@@ -2766,32 +2766,34 @@ static int usb_offload_open(struct inode *ip, struct file *fp)
 		USB_OFFLOAD_INFO("Single Device - bDeviceClass: 0x%x, VID: 0x%x, PID: 0x%x\n",
 				class, vid, pid);
 
-		if ((class == 0x00 || class == 0xef) &&
-			 udev->actconfig != NULL &&
-			 udev->actconfig->interface[0] != NULL &&
-			 udev->actconfig->interface[0]->cur_altsetting != NULL) {
+		for (intf_idx = 0; intf_idx < udev->actconfig->desc.bNumInterfaces; intf_idx++) {
+			if ((class == 0x00 || class == 0xef) &&
+				 udev->actconfig != NULL &&
+				 udev->actconfig->interface[intf_idx] != NULL &&
+				 udev->actconfig->interface[intf_idx]->cur_altsetting != NULL) {
+				int intf_class;
 
-			config = udev->actconfig;
-			class = config->interface[0]->cur_altsetting->desc.bInterfaceClass;
-			USB_OFFLOAD_INFO("Single Device - bInterfaceClass: 0x%x\n", class);
+				config = udev->actconfig;
+				intf_class = config->interface[intf_idx]->cur_altsetting->desc.bInterfaceClass;
+				USB_OFFLOAD_INFO("Single Device[%d] - bInterfaceClass: 0x%x\n", intf_idx, intf_class);
 
-			if (class == 0x01) {
-				if (check_usb_offload_quirk(vid, pid)) {
+				if (intf_class == 0x01) {
+					if (check_usb_offload_quirk(vid, pid)) {
+						mutex_unlock(&uodev->dev_lock);
+						return -1;
+					}
+
+					if (check_is_multiple_ep(config)) {
+						mutex_unlock(&uodev->dev_lock);
+						return -1;
+					}
+					USB_OFFLOAD_INFO("Single UAC - SUPPORT USB OFFLOAD!!\n");
+					uodev->opened = true;
+					uodev->speed = udev->speed;
+					uodev->uac_dev = udev;
 					mutex_unlock(&uodev->dev_lock);
-					return -1;
+					return 0;
 				}
-
-				if (check_is_multiple_ep(config)) {
-					mutex_unlock(&uodev->dev_lock);
-					return -1;
-				}
-
-				USB_OFFLOAD_INFO("Single UAC - SUPPORT USB OFFLOAD!!\n");
-				uodev->opened = true;
-				uodev->speed = udev->speed;
-				uodev->uac_dev = udev;
-				mutex_unlock(&uodev->dev_lock);
-				return 0;
 			}
 		}
 		USB_OFFLOAD_INFO("Single Device - Not UAC. NOT SUPPORT USB OFFLOAD!!\n");

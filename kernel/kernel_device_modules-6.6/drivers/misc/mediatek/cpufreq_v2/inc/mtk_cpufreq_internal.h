@@ -43,8 +43,13 @@
 #include "mtk_cpufreq_config.h"
 #include "mtk_cpufreq_struct.h"
 
+#ifndef MAX
 #define MAX(a, b) ((a) >= (b) ? (a) : (b))
+#endif
+
+#ifndef MIN
 #define MIN(a, b) ((a) >= (b) ? (b) : (a))
+#endif
 
 
 /* PORTING */

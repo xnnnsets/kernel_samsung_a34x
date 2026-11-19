@@ -662,7 +662,6 @@ static int pmif_spmi_read_cmd(struct spmi_controller *ctrl, u8 opc, u8 sid,
 	u32 data = 0;
 	u8 bc = len - 1;
 	unsigned long flags_m = 0;
-	int swinf_err = 0;
 
 	/* Check for argument validation. */
 	if (sid & ~(0xf))
@@ -723,16 +722,9 @@ static int pmif_spmi_read_cmd(struct spmi_controller *ctrl, u8 opc, u8 sid,
 		return ret;
 	}
 
-	swinf_err = GET_SWINF_ERR(data);
-
 	data = pmif_readl(arb->pmif_base[spmidev[sid].path], arb, inf_reg->rdata);
 	memcpy(buf, &data, (bc & 3) + 1);
 	pmif_writel(arb->pmif_base[spmidev[sid].path], arb, 1, inf_reg->ch_rdy);
-
-	if (swinf_err) {
-		raw_spin_unlock_irqrestore(&arb->lock_m, flags_m);
-		return -EIO;
-	}
 
 	raw_spin_unlock_irqrestore(&arb->lock_m, flags_m);
 
@@ -748,7 +740,6 @@ static int pmif_spmi_write_cmd(struct spmi_controller *ctrl, u8 opc, u8 sid,
 	u32 data = 0;
 	u8 bc = len - 1;
 	unsigned long flags_m = 0;
-	int swinf_err = 0;
 
 	/* Check for argument validation. */
 	if (sid & ~(0xf))
@@ -813,12 +804,6 @@ static int pmif_spmi_write_cmd(struct spmi_controller *ctrl, u8 opc, u8 sid,
 		raw_spin_unlock_irqrestore(&arb->lock_m, flags_m);
 
 		return ret;
-	}
-
-	swinf_err = GET_SWINF_ERR(data);
-	if (swinf_err) {
-		raw_spin_unlock_irqrestore(&arb->lock_m, flags_m);
-		return -EIO;
 	}
 
 	raw_spin_unlock_irqrestore(&arb->lock_m, flags_m);

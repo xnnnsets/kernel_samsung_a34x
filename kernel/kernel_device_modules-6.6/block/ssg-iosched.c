@@ -18,6 +18,7 @@
 #include <linux/compiler.h>
 #include <linux/rbtree.h>
 #include <linux/sbitmap.h>
+#include <linux/ktime.h>
 
 #include <trace/events/block.h>
 
@@ -322,6 +323,22 @@ done:
 	return rq;
 }
 
+static u64 ssg_inflight_account_total_ns(struct ssg_data *ssg)
+{
+	unsigned long flags;
+	u64 total, now;
+
+	spin_lock_irqsave(&ssg->inflight_time_lock, flags);
+	now = ktime_get_ns();
+	total = ssg->inflight_total_ns;
+	if (atomic_read(&ssg->allocated_rqs) > 0 && ssg->inflight_start_ns) {
+		total += now - ssg->inflight_start_ns;
+	}
+	spin_unlock_irqrestore(&ssg->inflight_time_lock, flags);
+
+	return (total != 0) ? total : 1;
+}
+
 /*
  * One confusing aspect here is that we get called for a specific
  * hardware queue, but we may return a request that is for a
@@ -517,11 +534,16 @@ static int ssg_init_queue(struct request_queue *q, struct elevator_type *e)
 
 	atomic_set(&ssg->allocated_rqs, 0);
 	atomic_set(&ssg->async_write_rqs, 0);
+
+	ssg->inflight_start_ns = 0;
+	ssg->inflight_total_ns = 0;
+
 	ssg->congestion_threshold_rqs =
 		q->nr_requests * congestion_threshold / 100U;
 	init_ssg_rq_info(ssg, q->nr_requests);
 
 	spin_lock_init(&ssg->lock);
+	spin_lock_init(&ssg->inflight_time_lock);
 	INIT_LIST_HEAD(&ssg->dispatch);
 
 	ssg_blkcg_activate(q);
@@ -640,8 +662,12 @@ static void ssg_prepare_request(struct request *rq)
 {
 	struct ssg_data *ssg = rq->q->elevator->elevator_data;
 	struct ssg_request_info *rqi;
+	unsigned long flags = 0;
 
-	atomic_inc(&ssg->allocated_rqs);
+	spin_lock_irqsave(&ssg->inflight_time_lock, flags);
+	if (atomic_inc_return(&ssg->allocated_rqs) == 1)
+		ssg->inflight_start_ns = ktime_get_ns();
+	spin_unlock_irqrestore(&ssg->inflight_time_lock, flags);
 
 	ssg_wb_run_ctrl_work(ssg, rq);
 
@@ -668,11 +694,19 @@ static void ssg_finish_request(struct request *rq)
 	struct request_queue *q = rq->q;
 	struct ssg_data *ssg = q->elevator->elevator_data;
 	struct ssg_request_info *rqi;
+	unsigned long flags = 0;
+	u64 now = 0;
 
 	if (unlikely(!(rq->rq_flags & RQF_USE_SCHED)))
 		return;
 
-	atomic_dec(&ssg->allocated_rqs);
+	spin_lock_irqsave(&ssg->inflight_time_lock, flags);
+	if (atomic_dec_and_test(&ssg->allocated_rqs)) {
+		now = ktime_get_ns();
+		ssg->inflight_total_ns += now - ssg->inflight_start_ns;
+		ssg->inflight_start_ns = 0;
+	}
+	spin_unlock_irqrestore(&ssg->inflight_time_lock, flags);
 
 	rqi = ssg_rq_info(ssg, rq);
 	if (likely(rqi)) {
@@ -731,6 +765,14 @@ SHOW_FUNCTION(ssg_max_tgroup_rqs_show, ssg->max_tgroup_rqs, 0);
 SHOW_FUNCTION(ssg_max_async_write_rqs_show, ssg->max_async_write_rqs, 0);
 SHOW_FUNCTION(ssg_tgroup_shallow_depth_show, ssg->tgroup_shallow_depth, 0);
 SHOW_FUNCTION(ssg_async_write_shallow_depth_show, ssg->async_write_shallow_depth, 0);
+static ssize_t ssg_inflight_ms_show(struct elevator_queue *e,
+		char *page)
+{
+	struct ssg_data *ssg = e->elevator_data;
+	u64 total_ns = ssg_inflight_account_total_ns(ssg);
+
+	return scnprintf(page, PAGE_SIZE, "%llu\n", total_ns / 1000000);
+}
 #undef SHOW_FUNCTION
 
 #define STORE_FUNCTION(__FUNC, __PTR, MIN, MAX, __CONV)			\
@@ -771,6 +813,7 @@ static struct elv_fs_entry ssg_attrs[] = {
 	SSG_ATTR_RO(max_async_write_rqs),
 	SSG_ATTR_RO(tgroup_shallow_depth),
 	SSG_ATTR_RO(async_write_shallow_depth),
+	SSG_ATTR_RO(inflight_ms),
 
 	SSG_STAT_ATTR_RO(read_latency),
 	SSG_STAT_ATTR_RO(write_latency),

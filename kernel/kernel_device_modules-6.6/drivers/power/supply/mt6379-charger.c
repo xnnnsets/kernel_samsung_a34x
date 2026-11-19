@@ -1509,11 +1509,6 @@ int mt6379_charger_fsw_control(struct mt6379_charger_data *cdata)
 			dev_info(dev, "%s, Failed to set chg_ramp_up_comp to 240kOhm\n",
 					__func__);
 
-		ret = regmap_update_bits(cdata->rmap, MT6379_REG_CHG_HD_TRIM6,
-				MT6379_CHG_IEOC_FLOW_RB_MSK, 0);
-		if (ret)
-			dev_info(dev, "%s, Failed to set no fccm in eoc flow\n", __func__);
-
 		ret = mt6379_enable_tm(cdata, false);
 		if (ret) {
 			dev_info(dev, "%s, Failed to disable tm\n", __func__);
@@ -1532,12 +1527,6 @@ int mt6379_charger_fsw_control(struct mt6379_charger_data *cdata)
 		if (ret)
 			dev_info(dev, "%s, Failed to set chg_ramp_up_comp to 400kOhm\n",
 					__func__);
-
-		ret = regmap_update_bits(cdata->rmap, MT6379_REG_CHG_HD_TRIM6,
-				MT6379_CHG_IEOC_FLOW_RB_MSK,
-				MT6379_CHG_IEOC_FLOW_RB_MSK);
-		if (ret)
-			dev_info(dev, "%s, Failed to set fccm in eoc flow\n", __func__);
 
 		ret = mt6379_enable_tm(cdata, false);
 		if (ret) {
@@ -1836,11 +1825,6 @@ static void mt6379_charger_check_pwr_rdy(struct mt6379_charger_data *cdata)
 					 MT6379_CHG_RAMPUP_COMP_MSK, val);
 		if (ret)
 			dev_info(dev, "%s, Failed to set chg_ramp_up_comp to 240kOhm\n", __func__);
-
-		ret = regmap_update_bits(cdata->rmap, MT6379_REG_CHG_HD_TRIM6,
-					 MT6379_CHG_IEOC_FLOW_RB_MSK, 0);
-		if (ret)
-			dev_info(dev, "%s, Failed to set no fccm in eoc flow\n", __func__);
 
 		ret = mt6379_enable_tm(cdata, false);
 		if (ret) {

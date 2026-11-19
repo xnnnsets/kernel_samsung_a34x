@@ -1597,7 +1597,6 @@ static void mtk_wdma_config(struct mtk_ddp_comp *comp,
 			}
 		}
 	}
-	write_dst_addr(comp, handle, 0, addr);
 
 	if (crtc_idx == 2 && comp->mtk_crtc->is_dual_pipe &&
 		wdma->data && wdma->data->is_right_wdma_comp(comp)) {

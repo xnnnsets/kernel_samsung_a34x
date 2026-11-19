@@ -420,6 +420,7 @@ static bool g_is_ux_fps_set;
 static int is_loading_based;
 static bool g_is_multiproducer;
 unsigned int force_loading_based_enable;
+struct mutex gMainHeadLock;
 
 /* end */
 
@@ -1574,10 +1575,13 @@ static void ged_kpi_work_cb(struct work_struct *psWork)
 
 			if (psHead->i32Count < 1
 				&& (psHead->sList.next == &(psHead->sList))) {
-				if (psHead == main_head)
-					main_head = NULL;
+			if (psHead == main_head) {
+				mutex_lock(&gMainHeadLock);
+				main_head = NULL;
+				mutex_unlock(&gMainHeadLock);
+			}
 
-				spin_lock_irqsave(&gs_hashtableLock, ulIRQFlags);
+			spin_lock_irqsave(&gs_hashtableLock, ulIRQFlags);
 				ged_kpi_remove_head(ulID);
 				ged_hashtable_remove(gs_hashtable, (unsigned long)ulID);
 				spin_unlock_irqrestore(&gs_hashtableLock, ulIRQFlags);
@@ -2780,6 +2784,7 @@ GED_ERROR ged_kpi_system_init(void)
 	g_eb_workload = 0;
 	force_loading_based_enable = 0;
 	update_gpu_fps_table(1);
+	mutex_init(&gMainHeadLock);
 
 	g_psGIFT = (struct GED_KPI_MEOW_DVFS_FREQ_PRED *)
 		ged_alloc_atomic(sizeof(struct GED_KPI_MEOW_DVFS_FREQ_PRED));
@@ -2839,6 +2844,7 @@ void ged_kpi_system_exit(void)
 #endif
 	destroy_workqueue(g_FenceWorkQueue);
 	ged_thread_destroy(ghThread);
+	mutex_destroy(&gMainHeadLock);
 #ifndef GED_BUFFER_LOG_DISABLE
 	ged_log_buf_free(ghLogBuf_KPI);
 	ghLogBuf_KPI = 0;
@@ -3262,10 +3268,20 @@ GED_ERROR ged_kpi_hint_frame_info(
 	if (out == NULL)
 		return GED_ERROR_FAIL;
 
-	out->eError = GED_OK;
-	out->mainHead_fps_v = main_head->target_fps_v;
-	out->mainHead_fps_gpu = main_head->t_gpu_fps;
-	out->mainHead_BQ_ID = main_head->ullWnd;
+	mutex_lock(&gMainHeadLock);
+	if (main_head) {
+		out->eError = GED_OK;
+		out->mainHead_fps_v = main_head->target_fps_v;
+		out->mainHead_fps_gpu = main_head->t_gpu_fps;
+		out->mainHead_BQ_ID = main_head->ullWnd;
+	} else {
+		out->eError = GED_OK;
+		out->mainHead_fps_v = 0;
+		out->mainHead_fps_gpu = 0;
+		out->mainHead_BQ_ID = 0;
+	}
+	mutex_unlock(&gMainHeadLock);
+
 	return GED_OK;
 #else
 	return GED_OK;

@@ -19,6 +19,7 @@
 #include <kree/mem.h>
 #include <kree/system.h>
 #include <tz_cross/ta_mem.h>
+#include <linux/dma-buf.h>
 #include <linux/mm.h>
 #include <linux/slab.h>
 #include <linux/mutex.h>
@@ -45,6 +46,69 @@ DEFINE_MUTEX(chmem_mutex);
 /******/
 
 #if API_sharedMem
+static DEFINE_IDR(shm_idr);
+static DEFINE_MUTEX(shm_idr_lock);
+
+void release_shmtracker_resources(struct shm_tracker *tracker)
+{
+	if (!tracker)
+		return;
+
+	if (!(tracker->is_page)) {
+		if (tracker->dmabuf_info.dbuf) {
+			if (tracker->dmabuf_info.sgt) {
+				dma_buf_unmap_attachment(tracker->dmabuf_info.attach,
+										tracker->dmabuf_info.sgt,
+										DMA_BIDIRECTIONAL);
+			}
+			if (tracker->dmabuf_info.attach) {
+				dma_buf_detach(tracker->dmabuf_info.dbuf,
+								tracker->dmabuf_info.attach);
+			}
+			dma_buf_put(tracker->dmabuf_info.dbuf);
+		}
+	}
+
+	kvfree(tracker);
+}
+EXPORT_SYMBOL(release_shmtracker_resources);
+
+void unregister_shm_by_handle(uint32_t shm_handle)
+{
+	struct shm_tracker *tracker;
+
+	mutex_lock(&shm_idr_lock);
+	tracker = idr_find(&shm_idr, shm_handle);
+	if (tracker)
+		idr_remove(&shm_idr, shm_handle);
+	mutex_unlock(&shm_idr_lock);
+
+	if (tracker)
+		release_shmtracker_resources(tracker);
+	else
+		KREE_ERR("Attempted to unregister an invalid handle: %u\n", shm_handle);
+}
+EXPORT_SYMBOL(unregister_shm_by_handle);
+TZ_RESULT register_shm_tracker(struct shm_tracker *tracker, uint32_t shm_handle)
+{
+	int idr_ret = 0;
+
+	if (!tracker)
+		return TZ_RESULT_ERROR_BAD_PARAMETERS;
+
+	tracker->handle = shm_handle;
+
+	mutex_lock(&shm_idr_lock);
+	idr_ret = idr_alloc(&shm_idr, tracker, tracker->handle, tracker->handle + 1, GFP_KERNEL);
+	mutex_unlock(&shm_idr_lock);
+	if (idr_ret != (tracker->handle)) {
+		KREE_ERR("Failed to store tracker for handle %u in IDR, error %d\n", tracker->handle, idr_ret);
+		return TZ_RESULT_ERROR_ITEM_NOT_FOUND;
+	}
+	return TZ_RESULT_SUCCESS;
+}
+EXPORT_SYMBOL(register_shm_tracker);
+
 static void add_shm_list_node(struct KREE_SHM_RUNLENGTH_LIST **tail,
 	uint64_t start, uint32_t size)
 {
@@ -1075,3 +1139,4 @@ TZ_RESULT KREE_ConfigSecureMultiChunkMemInfo(KREE_SESSION_HANDLE session,
 	return TZ_RESULT_SUCCESS;
 }
 EXPORT_SYMBOL(KREE_ConfigSecureMultiChunkMemInfo);
+MODULE_IMPORT_NS(DMA_BUF);

@@ -192,7 +192,9 @@ enum usb_lock_state {
 	USB_NOTIFY_UNLOCK = 0,
 	USB_NOTIFY_LOCK_USB_WORK,
 	USB_NOTIFY_LOCK_USB_RESTRICT,
-	USB_NOTIFY_INIT_STATE = 3,
+	USB_NOTIFY_LOCK_USB_RESTRICT_CLIENT,
+	USB_NOTIFY_INIT_STATE = 4,
+	USB_NOTIFY_INIT_STATE_AUTO = 5,
 };
 
 enum usb_check_allowlist_result {
@@ -294,6 +296,7 @@ extern int set_lpm_charging_type_done(struct otg_notify *n,
 		unsigned int state);
 extern int detect_illegal_condition(int type);
 extern int disconnect_unauthorized_device(struct usb_device *dev);
+extern bool is_client_cable_enable(struct otg_notify *n);
 #if defined(CONFIG_USB_HW_PARAM)
 extern unsigned long long *get_hw_param(struct otg_notify *n,
 					enum usb_hw_param index);
@@ -373,6 +376,7 @@ static inline int set_lpm_charging_type_done(struct otg_notify *n,
 		unsigned int state) {return 0; }
 static inline int detect_illegal_condition(int type) {return 0; }
 static inline int disconnect_unauthorized_device(struct usb_device *dev) {return 0; }
+static inline bool is_client_cable_enable(struct otg_notify *n) {return false; }
 #if defined(CONFIG_USB_HW_PARAM)
 static inline unsigned long long *get_hw_param(struct otg_notify *n,
 			enum usb_hw_param index) {return NULL; }

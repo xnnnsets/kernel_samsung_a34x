@@ -129,7 +129,10 @@ enum data_flag_t {
 	DATA_FLAG_CODE_REGION_STRING = 7
 };
 
-#define MIN(x, y)   ((x) <= (y) ? (x) : (y))
+#ifndef MIN
+#define MIN(X, Y) (((X) < (Y)) ? (X) : (Y))
+#endif
+
 #define FLAG_INT_POINTER_SIZE 16
 #define POINTER_SIZE 8
 #define U64_POINTER 1

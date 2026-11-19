@@ -178,15 +178,41 @@ invalid:
 	return -EINVAL;
 }
 
+#ifndef CONFIG_DISABLE_LOCKSCREEN_USB_RESTRICTION
+static int check_mdm_lock(struct usb_notify_dev *udev)
+{
+	int lock_state = -EINVAL;
+	char *lock_cmd = udev->disable_state_cmd;
+
+	if (!strcmp(lock_cmd, "ON") ||
+			!strncmp(lock_cmd, "ON_ALL_", 7) ||
+				!udev->usb_data_enabled) {
+		lock_state = NOTIFY_BLOCK_TYPE_ALL;
+	} else if (!strcmp(lock_cmd, "OFF")) {
+		lock_state = NOTIFY_BLOCK_TYPE_NONE;
+	} else if (!strncmp(lock_cmd, "ON_HOST_", 8)) {
+		lock_state = NOTIFY_BLOCK_TYPE_HOST;
+	} else if (!strncmp(lock_cmd, "ON_CLIENT_", 10)) {
+		lock_state = NOTIFY_BLOCK_TYPE_CLIENT;
+	}
+	return lock_state;
+}
+#endif
+
 static ssize_t disable_show(
 	struct device *dev, struct device_attribute *attr,
 		char *buf)
 {
 	struct usb_notify_dev *udev = (struct usb_notify_dev *)
 		dev_get_drvdata(dev);
+	ssize_t ret;
+	
+	mutex_lock(&udev->lockscreen_enabled_lock);
 
 	unl_info("read disable_state %s\n", udev->disable_state_cmd);
-	return sprintf(buf, "%s\n", udev->disable_state_cmd);
+	ret = sprintf(buf, "%s\n", udev->disable_state_cmd);
+	mutex_unlock(&udev->lockscreen_enabled_lock);
+	return ret;
 }
 
 static ssize_t disable_store(
@@ -215,6 +241,7 @@ static ssize_t disable_store(
 	if (sret != 1)
 		goto error1;
 
+	mutex_lock(&udev->lockscreen_enabled_lock);
 	if (udev->set_disable) {
 		param = is_valid_cmd(disable, udev->disable_state_cmd);
 		if (param == -EINVAL) {
@@ -232,9 +259,11 @@ static ssize_t disable_store(
 		}
 	} else
 		unl_err("set_disable func is NULL\n");
+	mutex_unlock(&udev->lockscreen_enabled_lock);
 error1:
 	kfree(disable);
 error:
+	unl_info("%s ret=%zu\n",__func__, ret);
 	return ret;
 }
 
@@ -244,9 +273,13 @@ static ssize_t usb_data_enabled_show(
 {
 	struct usb_notify_dev *udev = (struct usb_notify_dev *)
 		dev_get_drvdata(dev);
+	ssize_t ret;
 
+	mutex_lock(&udev->lockscreen_enabled_lock);
 	unl_info("read usb_data_enabled %lu\n", udev->usb_data_enabled);
-	return sprintf(buf, "%lu\n", udev->usb_data_enabled);
+	ret = sprintf(buf, "%lu\n", udev->usb_data_enabled);
+	mutex_unlock(&udev->lockscreen_enabled_lock);
+	return ret;
 }
 
 static ssize_t usb_data_enabled_store(
@@ -273,6 +306,7 @@ static ssize_t usb_data_enabled_store(
 	if (sret != 1)
 		goto error1;
 
+	mutex_lock(&udev->lockscreen_enabled_lock);
 	if (udev->set_disable) {
 		if (strcmp(usb_data_enabled, "0") == 0) {
 			param = NOTIFY_BLOCK_TYPE_ALL;
@@ -283,6 +317,7 @@ static ssize_t usb_data_enabled_store(
 		} else {
 			unl_err("%s usb_data_enabled(%s) error.\n",
 				__func__, usb_data_enabled);
+			mutex_unlock(&udev->lockscreen_enabled_lock);
 			goto error1;
 		}
 		unl_info("%s usb_data_enabled=%s\n",
@@ -292,6 +327,7 @@ static ssize_t usb_data_enabled_store(
 	} else {
 		unl_err("%s set_disable func is NULL\n", __func__);
 	}
+	mutex_unlock(&udev->lockscreen_enabled_lock);
 error1:
 	kfree(usb_data_enabled);
 error:
@@ -1242,6 +1278,7 @@ static const char *lock_string(enum usb_lock_state lock_state)
 {
 	switch (lock_state) {
 	case USB_NOTIFY_INIT_STATE:
+	case USB_NOTIFY_INIT_STATE_AUTO:
 		return "init";
 	case USB_NOTIFY_UNLOCK:
 		return "unlock";
@@ -1249,6 +1286,8 @@ static const char *lock_string(enum usb_lock_state lock_state)
 		return "usb work lock";
 	case USB_NOTIFY_LOCK_USB_RESTRICT:
 		return "usb restrict lock";
+	case USB_NOTIFY_LOCK_USB_RESTRICT_CLIENT:
+		return "usb client restrict lock";
 	default:
 		return "undefined";
 	}
@@ -1259,11 +1298,13 @@ static const char *const LOCK_STATE_NAMES[] = {
     "SUNNY_WORK_MODE",     // 0: USB_NOTIFY_UNLOCK
     "CLOUDY_WORK_MODE",    // 1: USB_NOTIFY_LOCK_USB_WORK
     "RAINY_RESTRICT_MODE",     // 2: USB_NOTIFY_LOCK_USB_RESTRICT
-    "SKY_DEFAULT"        // 3: default
+    "STORMY_RESTRICT_MODE", // 3: USB_NOTIFY_LOCK_USB_RESTRICT_CLIENT
+    "SKY_DEFAULT",        // 4: default
+	"SKY_DEFAULT_AUTO"	//5. default for Android auto
 };
 
-#define TOTAL_STATES 4
-#define VALID_INPUT_CNT 3  // "sunny", "cloudy", "rainy"
+#define TOTAL_STATES 6
+#define VALID_INPUT_CNT 5  // "sunny", "cloudy", "rainy" "stormy"
 
 static ssize_t usb_sl_show(struct device *dev,
 	struct device_attribute *attr, char *buf)
@@ -1271,12 +1312,13 @@ static ssize_t usb_sl_show(struct device *dev,
 	struct usb_notify_dev *udev = (struct usb_notify_dev *)
 		dev_get_drvdata(dev);
     const char *state;
+	ssize_t ret;
 
 	if (udev == NULL) {
 		unl_err("udev is NULL\n");
 		return -EINVAL;
 	}
-
+	mutex_lock(&udev->lockscreen_enabled_lock);
 	state = LOCK_STATE_NAMES[udev->secure_lock % TOTAL_STATES];
 
 #ifndef CONFIG_DISABLE_LOCKSCREEN_USB_RESTRICTION
@@ -1286,8 +1328,9 @@ static ssize_t usb_sl_show(struct device *dev,
 	unl_info("%s %s secure_lock = %lu\n",
 		__func__, state, udev->secure_lock);
 #endif
-
-    return snprintf(buf, PAGE_SIZE, "%s\n", state);
+	ret = snprintf(buf, PAGE_SIZE, "%s\n", state);
+	mutex_unlock(&udev->lockscreen_enabled_lock);
+    return ret;
 }
 
 static ssize_t usb_sl_store(
@@ -1300,6 +1343,8 @@ static ssize_t usb_sl_store(
 	unsigned long secure_lock = 0;
 #ifndef CONFIG_DISABLE_LOCKSCREEN_USB_RESTRICTION
 	unsigned long prev_secure_lock = 0;
+	int client_mdm_lock = 0;
+	bool is_usb_device_connected = false;
 #endif
 	int sret = -EINVAL;
 	size_t ret = -ENOMEM;
@@ -1316,8 +1361,8 @@ static ssize_t usb_sl_store(
 	}
 
 #ifndef CONFIG_DISABLE_LOCKSCREEN_USB_RESTRICTION
-	unl_info("%s before secure_lock = %s first_restrict = %d +\n",
-		__func__, lock_string(udev->secure_lock), udev->first_restrict);
+	unl_info("%s before secure_lock = %s, first_restrict = %d + udev->disable_state=%lu\n",
+		__func__, lock_string(udev->secure_lock), udev->first_restrict, udev->disable_state);
 #else
 	unl_info("%s before secure_lock = %lu +\n",
 		__func__, udev->secure_lock);
@@ -1342,14 +1387,17 @@ static ssize_t usb_sl_store(
 	}
 
 #ifndef CONFIG_DISABLE_LOCKSCREEN_USB_RESTRICTION
+	mutex_lock(&udev->lockscreen_enabled_lock);
 	prev_secure_lock = udev->secure_lock;
 #endif
 	udev->secure_lock = secure_lock;
 	udev->set_lock_state(udev);
 
 #ifndef CONFIG_DISABLE_LOCKSCREEN_USB_RESTRICTION
-	if (prev_secure_lock == USB_NOTIFY_INIT_STATE
-			&& secure_lock == USB_NOTIFY_LOCK_USB_RESTRICT) {
+	if ((prev_secure_lock == USB_NOTIFY_INIT_STATE
+			 || prev_secure_lock == USB_NOTIFY_INIT_STATE_AUTO)
+				&& (secure_lock == USB_NOTIFY_LOCK_USB_RESTRICT
+					|| secure_lock == USB_NOTIFY_LOCK_USB_RESTRICT_CLIENT)) {
 		if (udev->set_disable) {
 			udev->set_disable(udev, NOTIFY_BLOCK_TYPE_ALL);
 			udev->first_restrict = true;
@@ -1361,8 +1409,49 @@ static ssize_t usb_sl_store(
 			udev->set_disable(udev, NOTIFY_BLOCK_TYPE_NONE);
 			udev->first_restrict = false;
 		}
-	}
+	} else {
+		 switch(secure_lock) {
+		 case USB_NOTIFY_LOCK_USB_RESTRICT_CLIENT:
+			 client_mdm_lock = check_mdm_lock(udev);
+			 is_usb_device_connected = is_client_cable_enable(udev->o_notify);
+			 unl_info("%s secure_lock= %lu , prev_secure_lock=%lu, client_mdm_lock=%d, "
+			 	"usbdevice_connected=%d, udev->disable_state=%lu-\n",
+				 __func__, secure_lock, prev_secure_lock, client_mdm_lock,
+				 is_usb_device_connected, udev->disable_state);
+		 
+			 if (!udev->first_restrict && 
+				 ((prev_secure_lock == USB_NOTIFY_LOCK_USB_RESTRICT) ||
+				  !is_usb_device_connected)) {
+		 
+					 switch (client_mdm_lock) {
+					 case NOTIFY_BLOCK_TYPE_HOST:
+						 if (udev->set_disable) 
+							 udev->set_disable(udev, NOTIFY_BLOCK_TYPE_ALL);
+					 break;
+					 case NOTIFY_BLOCK_TYPE_NONE:
+						 if (udev->set_disable)
+							 udev->set_disable(udev, NOTIFY_BLOCK_TYPE_CLIENT);
+					 break;
+					 default:
+					 	unl_err("%s: invalid client_mdm_lock=%d\n", __func__, client_mdm_lock);
+					 break;
+				 }
+			 }
+		 break;
+		 case USB_NOTIFY_UNLOCK:
+			 client_mdm_lock = check_mdm_lock(udev);
+			 if (!udev->first_restrict &&
+				 prev_secure_lock == USB_NOTIFY_LOCK_USB_RESTRICT_CLIENT) {
+				 if (udev->set_disable)
+					 udev->set_disable(udev, client_mdm_lock);
+			 }
+		 break;
+		 default:
+		 break;
+		 }
 
+	}
+	mutex_unlock(&udev->lockscreen_enabled_lock);
 	unl_info("%s after secure_lock = %s -\n",
 		__func__, lock_string(udev->secure_lock));
 #else

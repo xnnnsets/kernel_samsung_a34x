@@ -3,9 +3,11 @@
  * Copyright (c) 2021 MediaTek Inc.
  */
 
+#include <asm/pgtable.h>
 #include <linux/arm-smccc.h>
 #include <linux/atomic.h>
 #include <linux/io.h>
+#include <linux/mm.h>
 #include <linux/module.h>
 #include <linux/of_device.h>
 #include <linux/of_fdt.h>
@@ -102,7 +104,7 @@ struct tfa_debug_info {
 	struct proc_dir_entry *proc_dir;
 	phys_addr_t debug_buf_paddr;
 	phys_addr_t total_size;
-	void *vaddr;
+	void __iomem *vaddr;
 	/* Debug buffer entry */
 	struct tfa_debug_entry_info runtime;
 	atomic_t release_log;
@@ -418,13 +420,24 @@ static int lookup_reserved_memory(void)
 		return -EINVAL;
 	}
 
-	info.vaddr = memremap(info.debug_buf_paddr, info.total_size, MEMREMAP_WC);
+#if IS_ENABLED(CONFIG_ARM64)
+	/* Remap as read-only Normal Memory */
+	pgprot_t prot = pgprot_writecombine(PAGE_KERNEL_RO);
+
+	info.vaddr = ioremap_prot(info.debug_buf_paddr, info.total_size, pgprot_val(prot));
+#else
+	/*
+	 * In case ARM32 does not support ioremap_prot, we maintain backward compatibility
+	 * with the old solution to avoid build issues, even though we don't use it.
+	 */
+	info.vaddr = ioremap(info.debug_buf_paddr, info.total_size);
+#endif
 	if (IS_ERR(info.vaddr)) {
 		pr_notice("Fail to remap debug buf vaddr:%ld\n",
 			PTR_ERR(info.vaddr));
 		return -ENOMEM;
 	}
-	pr_info("debug buf vaddr:0x%llx\n", (unsigned long long)info.vaddr);
+	pr_info("[TFA]RO debug buf vaddr:0x%llx\n", (unsigned long long)info.vaddr);
 	return 0;
 }
 
@@ -569,7 +582,7 @@ static int tfa_debug_remove(struct platform_device *pdev)
 	remove_proc_entry(DEBUG_BUF_TOTAL_RAW_PROC_NAME,
 		info.proc_dir);
 	remove_proc_entry(DEBUG_BUF_PROC_FOLDER_NAME, NULL);
-	memunmap(info.vaddr);
+	iounmap(info.vaddr);
 	return 0;
 }
 

@@ -54,8 +54,13 @@
 static kuid_t uid = KUIDT_INIT(0);
 static kgid_t gid = KGIDT_INIT(1000);
 
+#ifndef MIN
 #define MIN(_a_, _b_) ((_a_) > (_b_) ? (_b_) : (_a_))
+#endif
+
+#ifndef MAX
 #define MAX(_a_, _b_) ((_a_) > (_b_) ? (_a_) : (_b_))
+#endif
 /* Charger Limiter
  * Charger Limiter provides API to limit charger IC input current and
  * battery charging current. It arbitrates the limitation from users and sets

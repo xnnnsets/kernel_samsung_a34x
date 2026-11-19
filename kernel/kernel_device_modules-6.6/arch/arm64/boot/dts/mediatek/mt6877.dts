@@ -3054,7 +3054,7 @@
 		compatible = "mediatek,charger,pd";
 		gauge = <&mtk_gauge>;
 
-		min-charger-voltage = <4600000>;
+		min-charger-voltage = <4400000>;
 		pd-vbus-low-bound = <5000000>;
 		pd-vbus-upper-bound = <5000000>;
 		vsys-watt = <5000000>;

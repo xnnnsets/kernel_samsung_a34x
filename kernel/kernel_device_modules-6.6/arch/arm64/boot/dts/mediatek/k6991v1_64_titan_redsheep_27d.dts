@@ -14,8 +14,34 @@
 bootargs_ext = "rcu_nocbs=0-7";
 };
 
-&disp_aal0 {
-	mtk-dre30-support = <0>;
+&mtkheap_page_svp {
+	status = "ok";
+};
+
+&mtkheap_page_wfd {
+	status = "ok";
+};
+
+&mtkheap_region_svp {
+	status = "ok";
+};
+
+&mtkheap_region_wfd {
+	status = "ok";
+};
+
+&mtkheap_region_tui {
+	status = "ok";
+};
+
+&mtee_svp {
+	mtee: MTEE {
+		compatible = "mediatek,mtk_svp_on_mtee_support";
+	};
+
+	svp: SecureVideoPath {
+		compatible = "mediatek,mtk_sec_video_path_support";
+	};
 };
 
 &ise_mbox {
@@ -134,7 +160,8 @@ bootargs_ext = "rcu_nocbs=0-7";
 	pinctrl-names = "mode_te_te", "mode_te_te1";
 	pinctrl-0 = <&mtkfb_pins_lcm_dsi_te>;
 	pinctrl-1 = <&mtkfb_pins_lcm_dsi1_te>;
-
+	crtc-path-type = <0>, <2>, <0>, <0>;
+	bypass-pc-path = <1>;
 	status = "okay";
 //	enable-discrete-path = <1>;
 };
@@ -601,7 +628,6 @@ bootargs_ext = "rcu_nocbs=0-7";
 #endif
 
 &connfem {
-
 	/* Overwrite sky55208 2g1 with Antsel 19 & 20 remapping */
 	layouts {
 		g_wf1_bt1_sky55208: g-wf1-bt1-sky55208 {
@@ -615,23 +641,70 @@ bootargs_ext = "rcu_nocbs=0-7";
 		};
 	};
 
-	sku-mtk {
-		hw-names = "sky55208_sky55714";	/* [0] SKY55208/SKY55714 , 2G+2A */
+	sku {
+		hw-names =
+			"qm42655_qm45655",	/* [0] QM42655/QM45655, 2G+2A+1A, BT AntSwap */
+			"qm42655_qm45655_2g2a",	/* [1] QM42655/QM45655, 2G+2A */
+			"sky55208_sky55714";	/* [2] SKY55208/SKY55714, 2G+2A+1A, BT AntSwap */
 
 		/***************************************************************
-		 * [HW][0] SKY55208/SKY55714 , 2G+2A
+		 * [HW][0] QM42655/QM45655, 2G+2A+1A, BT AntSwap
 		 **************************************************************/
 		hw-0 {
 			using-fems =
-				<&sky55208>,
-				<&sky55714>;
+				<&qm42655>,
+				<&qm45655>;
 
 			layout-flag = <0x00000000>;
 			layout =
-				<&g_wf0_bt0_sky55208>,
-				<&g_wf1_bt1_sky55208>,
-				<&a_wf0_sky55714>,
-				<&a_wf1_sky55714>;
+				<&g_wf0_bt0_qm42655>,
+				<&g_wf1_bt1_qm42655>,
+				<&a_wf0_qm45655>,
+				<&a_wf1_qm45655>,
+				<&a_wf2_bt0_qm45655>;
+
+			layout-spdt =
+				<&spdt_a2_filter>,
+				<&spdt_g_bt1_antswap>;
+
+			common {
+				flags {
+					fe-ant-cnt = [96];
+					fe-conn-dpdt-sp3t = [80];
+					fe-conn-spdt = [98];
+					fe-bt-wf-usage = [98];
+					fe-conn-spdt-2 = [80];
+				};
+			};
+
+			wifi {
+				using-states =
+					<&qm42655_rxl>,
+					<&qm45655_rxl>;
+			};
+
+			bt {
+				flags {
+					efem-mode = [03]; /* 3:epa_elna, 2:epa, 1:elna, 0:bypass */
+					rx-mode = [34]; /* 0x34: G-band RxL, HBBT RxH */
+				};
+			};
+		};
+
+		/***************************************************************
+		 * [HW][1] QM42655/QM45655, 2G+2A
+		 **************************************************************/
+		hw-1 {
+			using-fems =
+				<&qm42655>,
+				<&qm45655>;
+
+			layout-flag = <0x00000000>;
+			layout =
+				<&g_wf0_bt0_qm42655>,
+				<&g_wf1_bt1_qm42655>,
+				<&a_wf0_qm45655>,
+				<&a_wf1_qm45655>;
 
 			common {
 				flags {
@@ -645,8 +718,8 @@ bootargs_ext = "rcu_nocbs=0-7";
 
 			wifi {
 				using-states =
-					<&sky55208_rxl>,
-					<&sky55714_rxl>;
+					<&qm42655_rxl>,
+					<&qm45655_rxl>;
 			};
 
 			bt {
@@ -656,15 +729,65 @@ bootargs_ext = "rcu_nocbs=0-7";
 				};
 			};
 		};
+
+		/***************************************************************
+		 * [HW][2] SKY55208/SKY55714, 2G+2A+1A, BT AntSwap
+		 **************************************************************/
+		hw-2 {
+			using-fems =
+				<&sky55208>,
+				<&sky55714>;
+
+			layout-flag = <0x00000000>;
+			layout =
+				<&g_wf0_bt0_sky55208>,
+				<&g_wf1_bt1_sky55208>,
+				<&a_wf0_sky55714>,
+				<&a_wf1_sky55714>,
+				<&a_wf2_bt0_sky55714>;
+
+			layout-spdt =
+				<&spdt_a2_filter>,
+				<&spdt_g_bt1_antswap>;
+
+			common {
+				flags {
+					fe-ant-cnt = [96];
+					fe-conn-dpdt-sp3t = [80];
+					fe-conn-spdt = [98];
+					fe-bt-wf-usage = [98];
+					fe-conn-spdt-2 = [80];
+				};
+			};
+
+			wifi {
+				using-states =
+					<&sky55208_rxl>,
+					<&sky55714_rxl>;
+			};
+
+			bt {
+				flags {
+					efem-mode = [03]; /* 3:epa_elna, 2:epa, 1:elna, 0:bypass */
+					rx-mode = [34]; /* 0x34: G-band RxL, HBBT RxH */
+				};
+			};
+		};
 	};
 };
 
-&bt {
-	flavor-bin = "dx5_2g2a_tc10sp";
+&reserved_memory {
+	wifi_coredump_mem: wifi-coredump-reserve-memory {
+		compatible = "mediatek,wifi-coredump-reserve-memory";
+		no-map;
+		size = <0 0x500000>;
+		alignment = <0 0x1000000>;
+		alloc-ranges = <0 0x40000000 0 0x80000000>;
+	};
 };
 
 &wifi {
-	flavor-bin = "dx5_2g2a_tc10sp";
+	default-memdump = "2";
 };
 
 &mt6363_vbuck5 {
@@ -687,7 +810,16 @@ bootargs_ext = "rcu_nocbs=0-7";
 	regulator-always-on;
 };
 
-#include <k6991v1_64_titan_bluesnake_25w/cust.dtsi>
+&mmc1 {
+	vmmc-use-eint-high;
+};
+
+&mmc2 {
+	vmmc-use-enit-high;
+};
+
+#include <k6991v1_64_titan_redsheep_27d/cust.dtsi>
+#include "mediatek/cust_k6991_connfem.dtsi"
 
 #include "mediatek/cust_mt6991_touch_1080x2400_mult.dtsi"
 #include "mediatek/cust_mt6991_camera_v4l2.dtsi"

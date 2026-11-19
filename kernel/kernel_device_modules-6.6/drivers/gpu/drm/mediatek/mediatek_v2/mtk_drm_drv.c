@@ -8968,8 +8968,8 @@ int mtk_drm_get_mode_ext_info_ioctl(struct drm_device *dev, void *data,
 		return 0;
 
 	//memory allocate of array, getting user space pointer of first layer of 2D array
-	user_switch_mode_delay = kcalloc(1, sizeof(enum SWITCH_MODE_DELAY *)
-		* mtk_crtc->avail_modes_num, GFP_KERNEL);
+	user_switch_mode_delay = kcalloc(mtk_crtc->avail_modes_num,
+			sizeof(enum SWITCH_MODE_DELAY *), GFP_KERNEL);
 	if (copy_from_user(user_switch_mode_delay, args->switch_mode_delay,
 			sizeof(enum SWITCH_MODE_DELAY *) * mtk_crtc->avail_modes_num) != 0) {
 		DDPPR_ERR("%s alloc mem fail\n", __func__);
@@ -8977,34 +8977,30 @@ int mtk_drm_get_mode_ext_info_ioctl(struct drm_device *dev, void *data,
 		return  -EFAULT;
 	}
 
-	total_offset = kcalloc(1, sizeof(unsigned int) * mtk_crtc->avail_modes_num,
+	total_offset = kcalloc(mtk_crtc->avail_modes_num, sizeof(unsigned int),
 			GFP_KERNEL);
-	real_te_duration = kcalloc(1, sizeof(unsigned int) * mtk_crtc->avail_modes_num,
+	real_te_duration = kcalloc(mtk_crtc->avail_modes_num, sizeof(unsigned int),
 			GFP_KERNEL);
-	switch_mode_delay = kcalloc(1, sizeof(enum SWITCH_MODE_DELAY *)
-		* mtk_crtc->avail_modes_num, GFP_KERNEL);
-	for (i = 0;  i < mtk_crtc->avail_modes_num; i++) {
-		switch_mode_delay[i] =
-			kcalloc(1, sizeof(enum SWITCH_MODE_DELAY) * mtk_crtc->avail_modes_num,
+	switch_mode_delay = kcalloc(mtk_crtc->avail_modes_num, sizeof(enum SWITCH_MODE_DELAY *),
 			GFP_KERNEL);
-	}
 	if (!total_offset || !real_te_duration || !switch_mode_delay) {
 		DDPPR_ERR("%s alloc mem fail\n", __func__);
 		kfree(real_te_duration);
 		kfree(total_offset);
-		for (i = 0;  i < mtk_crtc->avail_modes_num; i++)
-			kfree(switch_mode_delay[i]);
 		kfree(switch_mode_delay);
 		kfree(user_switch_mode_delay);
 		return -EFAULT;
 	}
 
 	for (i = 0;  i < mtk_crtc->avail_modes_num; i++) {
+		switch_mode_delay[i] =
+			kcalloc(mtk_crtc->avail_modes_num, sizeof(enum SWITCH_MODE_DELAY),
+			GFP_KERNEL);
 		if (!switch_mode_delay[i]) {
 			DDPPR_ERR("%s alloc mem fail\n", __func__);
 			kfree(real_te_duration);
 			kfree(total_offset);
-			for (j = 0;  j < mtk_crtc->avail_modes_num; j++)
+			for (j = 0; j < i; j++)
 				kfree(switch_mode_delay[j]);
 			kfree(switch_mode_delay);
 			kfree(user_switch_mode_delay);
@@ -9172,10 +9168,10 @@ int mtk_drm_ioctl_get_all_connector_panel_info(struct drm_device *dev, void *dat
 	if (check_only_mode == false) {
 		ptr = panel_ctx->connector_obj_id;
 		__panel_ctx.connector_obj_id =
-			vmalloc(sizeof(unsigned int) * __panel_ctx.connector_cnt);
-		__panel_ctx.possible_crtc = vzalloc(sizeof(unsigned int *) * __panel_ctx.connector_cnt);
-		__panel_ctx.panel_name = vzalloc(sizeof(char *) * __panel_ctx.connector_cnt);
-		__panel_ctx.dsi_mode = vzalloc(sizeof(unsigned int) * __panel_ctx.connector_cnt);
+			vcalloc(__panel_ctx.connector_cnt, sizeof(unsigned int));
+		__panel_ctx.possible_crtc = vcalloc(__panel_ctx.connector_cnt, sizeof(unsigned int *));
+		__panel_ctx.panel_name = vcalloc(__panel_ctx.connector_cnt, sizeof(char *));
+		__panel_ctx.dsi_mode = vcalloc(__panel_ctx.connector_cnt, sizeof(unsigned int));
 		if (!__panel_ctx.connector_obj_id || !__panel_ctx.possible_crtc ||
 				!__panel_ctx.panel_name || !__panel_ctx.dsi_mode) {
 			DDPPR_ERR("%s ojb_id panel_id or panel_name alloc fail\n", __func__);
@@ -9184,7 +9180,7 @@ int mtk_drm_ioctl_get_all_connector_panel_info(struct drm_device *dev, void *dat
 		}
 
 		for (i = 0 ; i < __panel_ctx.connector_cnt ; ++i) {
-			__panel_ctx.possible_crtc[i] = vzalloc(sizeof(unsigned int) * MAX_CRTC_CNT);
+			__panel_ctx.possible_crtc[i] = vcalloc(MAX_CRTC_CNT, sizeof(unsigned int));
 			if (!__panel_ctx.possible_crtc[i]) {
 				DDPPR_ERR("%s alloc possible_crtc fail\n", __func__);
 				ret = -ENOMEM;
@@ -9192,7 +9188,7 @@ int mtk_drm_ioctl_get_all_connector_panel_info(struct drm_device *dev, void *dat
 			}
 		}
 		for (i = 0 ; i < __panel_ctx.connector_cnt ; ++i) {
-			__panel_ctx.panel_name[i] = vzalloc(sizeof(char) * GET_PANELS_STR_LEN);
+			__panel_ctx.panel_name[i] = vcalloc(GET_PANELS_STR_LEN, sizeof(char));
 			if (!__panel_ctx.panel_name[i]) {
 				DDPPR_ERR("%s alloc panel_name fail\n", __func__);
 				ret = -ENOMEM;
@@ -9215,7 +9211,7 @@ int mtk_drm_ioctl_get_all_connector_panel_info(struct drm_device *dev, void *dat
 
 		// copy possible_crtc
 		conv_to_crtc_obj_id(dev, &__panel_ctx);
-		crtc_uptr = vmalloc(sizeof(void __user *) * __panel_ctx.connector_cnt);
+		crtc_uptr = vcalloc(__panel_ctx.connector_cnt, sizeof(void __user *));
 		if (!crtc_uptr) {
 			DDPPR_ERR("%s alloc possible_crtc fail\n", __func__);
 			ret = -ENOMEM;
@@ -9236,7 +9232,7 @@ int mtk_drm_ioctl_get_all_connector_panel_info(struct drm_device *dev, void *dat
 			}
 		}
 		// copy panel name
-		panel_uptr = vmalloc(sizeof(void __user *) * __panel_ctx.connector_cnt);
+		panel_uptr = vcalloc(__panel_ctx.connector_cnt, sizeof(void __user *));
 		if (!panel_uptr) {
 			DDPPR_ERR("%s alloc panel_name fail\n", __func__);
 			ret = -ENOMEM;

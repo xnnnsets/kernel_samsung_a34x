@@ -53,9 +53,15 @@
 #define WORD_TO_LOW(w) ((u8)((w) & 0xff ))
 #define WORD_TO_HIGH(w) ((u8)(((w) >>8 ) & 0xff))
 
+#ifndef ABS
 #define ABS(a) ((a) > 0 ? (a) : -(a))
+#endif
+#ifndef MAX
 #define MAX(a,b) ((a) > (b) ? (a) : (b))
+#endif
+#ifndef MIN
 #define MIN(a,b) ((a) < (b) ? (a) : (b))
+#endif
 
 #define BITS_PER_BYTE           8
 

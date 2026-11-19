@@ -44,7 +44,7 @@
     --------------------------------------------  end of reserved sec_debug
 */
 
-#define SZ_960	0x000003C0
+#define SZ_768	0x300
 #define EXTRA_VERSION	"TE23"
 
 static unsigned int __read_mostly reset_rwc;
@@ -56,21 +56,21 @@ static u32 __initdata sec_extra_info_size = SZ_64K;
 struct sec_debug_panic_extra_info sec_debug_extra_info_init = {
 	.item = {
 		{"ID",		"", SZ_32},
-		{"KTIME",	"", SZ_8},
-		{"QBI", 	"", SZ_16},
-		{"LEV", 	"", SZ_4},
-		{"BIN",		"", SZ_16},
-		{"RSTCNT",	"", SZ_4},
+		{"KTIME",	"", SZ_32},
+		{"QBI",		"", SZ_16},
+		{"LEV",		"", SZ_8},
+		{"BIN",		"", SZ_8},
+		{"RSTCNT",	"", SZ_8},
 		{"RR",		"", SZ_8},
 		{"PC",		"", SZ_64},
 		{"LR",		"", SZ_64},		
 		{"FAULT",	"", SZ_32},
 		{"BUG",		"", SZ_64},
 		{"PANIC",	"", SZ_64},
-		{"STACK",	"", SZ_960},
+		{"STACK",	"", SZ_768},
 		{"SMP",		"", SZ_8},
-		{"ETC",		"", SZ_256},
-		{"KLG",		"", SZ_256},
+		{"ETC",		"", SZ_8},
+		{"KLG",		"", SZ_128},
 
 		/* extrb reset information */
 		{"ID",		"", SZ_32},
@@ -81,7 +81,7 @@ struct sec_debug_panic_extra_info sec_debug_extra_info_init = {
 		/* extrm reset information */
 		{"ID",		"", SZ_32},
 		{"RR",		"", SZ_8},
-		{"MFC",		"", SZ_960},
+		{"MFC",		"", SZ_256},
 	}
 };
 

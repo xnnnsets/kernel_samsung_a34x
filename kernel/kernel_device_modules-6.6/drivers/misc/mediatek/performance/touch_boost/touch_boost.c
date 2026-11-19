@@ -67,6 +67,7 @@ static DEFINE_MUTEX(cpu_ctrl_lock);
 static struct _cpufreq freq_to_set[CLUSTER_MAX];
 static struct freq_qos_request *freq_min_request;
 static struct freq_qos_request *freq_max_request;
+static bool freq_qos_valid;
 static int enable = 1;
 static int boost_ta = 1;
 static int boost_fg = 1;
@@ -217,8 +218,10 @@ void touch_boost_get_cmd(int *cmd, int *enable,
 	mutex_unlock(&tch2pwr_lock);
 }
 
-int _update_userlimit_cpufreq_min(int cid, int value)
+static int __update_userlimit_cpufreq_min_locked(int cid, int value)
 {
+	if (!freq_qos_valid || !freq_min_request)
+		return -ENODEV;
 	_cpu_ctrl_systrace(value, "tchbst_freq_c%d", cid);
 	return freq_qos_update_request(&(freq_min_request[cid]), value);
 }
@@ -227,16 +230,22 @@ static void notify_touch_up_timeout(struct work_struct *work)
 {
 	int i = 0, ret = -1;
 
-	for (i = 0 ; i < policy_num ; i++) {
-		ret = _update_userlimit_cpufreq_min(i, 0);
+	mutex_lock(&cpu_ctrl_lock);
+	if (!freq_qos_valid || !freq_min_request) {
+		mutex_unlock(&cpu_ctrl_lock);
+		goto out;
+	}
+	for (i = 0; i < policy_num; i++) {
+		ret = __update_userlimit_cpufreq_min_locked(i, 0);
 		if (ret < 0) {
 			pr_info("[%s] freq_qos_update_request fail, cpu=%d freq=%d ret=%d",
 				__func__, i, 0, ret);
 		}
 	}
+	mutex_unlock(&cpu_ctrl_lock);
 
+out:
 	touch_boost_on = 0;
-
 	send_boost_cmd(TOUCH_BOOST_CPU, 0);
 }
 
@@ -266,14 +275,22 @@ void _force_stop_touch_boost(void)
 	int i = 0, ret = -1;
 
 	disable_touch_boost_timer();
-	for (i = 0 ; i < policy_num ; i++) {
-		ret = _update_userlimit_cpufreq_min(i, 0);
+
+	mutex_lock(&cpu_ctrl_lock);
+	if (!freq_qos_valid || !freq_min_request) {
+		mutex_unlock(&cpu_ctrl_lock);
+		goto out;
+	}
+	for (i = 0; i < policy_num; i++) {
+		ret = __update_userlimit_cpufreq_min_locked(i, 0);
 		if (ret < 0) {
 			pr_info("[%s] freq_qos_update_request fail, cpu=%d freq=%d ret=%d",
 				__func__, i, 0, ret);
 		}
 	}
+	mutex_unlock(&cpu_ctrl_lock);
 
+out:
 	send_boost_cmd(TOUCH_BOOST_CPU, 0);
 	touch_boost_on = 0;
 	force_stop_boost = 0;
@@ -286,19 +303,27 @@ void touch_boost(void)
 	disable_touch_boost_timer();
 	enable_touch_boost_timer();
 
-	for (i = 0 ; i < policy_num ; i++) {
+	mutex_lock(&cpu_ctrl_lock);
+	if (!freq_qos_valid || !freq_min_request || !cpu_opp_tbl) {
+		mutex_unlock(&cpu_ctrl_lock);
+		return;
+	}
+
+	for (i = 0; i < policy_num; i++) {
 		if (boost_opp_cluster[i] >= 0) {
-			freq_to_set[i].min = cpu_opp_tbl[i][boost_opp_cluster[i]];
-			ret = _update_userlimit_cpufreq_min(i, freq_to_set[i].min);
+
+			freq_to_set[i].min =  cpu_opp_tbl[i][boost_opp_cluster[i]];
+			_cpu_ctrl_systrace(freq_to_set[i].min, "tchbst_freq_c%d", i);
+			ret = freq_qos_update_request(&(freq_min_request[i]), freq_to_set[i].min);
 			if (ret < 0) {
 				pr_info("[%s] freq_qos_update_request fail, cpu=%d freq=%d ret=%d",
 					__func__, i, freq_to_set[i].min, ret);
 			}
 		}
 	}
+	mutex_unlock(&cpu_ctrl_lock);
 
 	touch_boost_on = 1;
-
 	send_boost_cmd(TOUCH_BOOST_CPU, 1);
 }
 
@@ -1106,6 +1131,9 @@ static int __init touch_boost_init(void)
 		cpufreq_cpu_put(policy);
 	}
 
+	mutex_lock(&cpu_ctrl_lock);
+	freq_qos_valid = true;
+	mutex_unlock(&cpu_ctrl_lock);
 	touch_boost_cache = kmem_cache_create("touch_boost_cache",
 			sizeof(struct k_list),
 			0,
@@ -1124,10 +1152,41 @@ static int __init touch_boost_init(void)
 
 static void __exit touch_boost_exit(void)
 {
-	kvfree(opp_count);
-	kvfree(opp_table);
+	int i;
+
+	/* 1. Stop input events from triggering new boosts */
+	input_unregister_handler(&dbs_input_handler);
+
+	/* 2. Stop the kthread */
+	if (ktchboost.thread)
+		kthread_stop(ktchboost.thread);
+
+	/* 3. Cancel timer and flush pending work */
+	hrtimer_cancel(&hrt1);
+	cancel_work_sync(&mt_touch_timeout_work);
+	if (wq)
+		destroy_workqueue(wq);
+
+	/* 4. Invalidate freq_qos under mutex, then remove requests */
+	mutex_lock(&cpu_ctrl_lock);
+	freq_qos_valid = false;
+	for (i = 0; i < policy_num && freq_min_request; i++)
+		freq_qos_remove_request(&freq_min_request[i]);
+	for (i = 0; i < policy_num && freq_max_request; i++)
+		freq_qos_remove_request(&freq_max_request[i]);
+	mutex_unlock(&cpu_ctrl_lock);
+
+	/* 5. Now safe to free the arrays */
 	kvfree(freq_min_request);
 	kvfree(freq_max_request);
+	freq_min_request = NULL;
+	freq_max_request = NULL;
+
+	/* 6. Free other resources */
+	kvfree(opp_count);
+	kvfree(opp_table);
+	kvfree(_opp_cnt);
+	kvfree(cpu_opp_tbl);
 	kmem_cache_destroy(touch_boost_cache);
 }
 
