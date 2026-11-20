@@ -14,7 +14,6 @@
 #if defined(__KERNEL__)
 #include <linux/module.h>
 #include <linux/regmap.h>
-#include <linux/minmax.h>
 //#include <linux/miscdevice.h>
 #include <linux/ioctl.h>
 #include <linux/workqueue.h>
@@ -136,6 +135,7 @@ enum dev_id_index {
 
 #define FSM_DEV_MAX   (4)
 #define FSM_ADDR_BASE (0x34)
+#define MIN(a, b)     ((a) < (b) ? (a) : (b))
 #define HIGH8(val)    ((val >> 8) & 0xFF)
 #define LOW8(val)     (val & 0xFF)
 #define WORD(addr)    ((*(addr) << 8) & *((addr) + 1))

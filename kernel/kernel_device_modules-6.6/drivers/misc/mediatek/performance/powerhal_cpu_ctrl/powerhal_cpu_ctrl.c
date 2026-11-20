@@ -22,7 +22,6 @@
 #include <linux/pm_qos.h>
 #include <linux/sort.h>
 #include <linux/mutex.h>
-#include <linux/minmax.h>
 
 #if IS_ENABLED(CONFIG_MEDIATEK_CPU_DVFS)
 #include "mtk_cpufreq_api.h"
@@ -72,6 +71,9 @@ static const struct proc_ops perfmgr_ ## name ## _proc_fops = { \
 		if (debug_enable) \
 			pr_debug(fmt, ##x); \
 	} while (0)
+
+#define MAX(a, b) (((a) > (b)) ? (a) : (b))
+#define MIN(a, b) (((a) < (b)) ? (a) : (b))
 
 #define CLUSTER_MAX 10
 #define CORE_MAX 8

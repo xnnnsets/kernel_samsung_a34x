@@ -19,7 +19,6 @@
 #include <linux/kernel.h>
 #include <linux/errno.h>
 #include <linux/rtc.h>
-#include <linux/minmax.h>
 
 #define shub_dbg(fmt, ...) do { \
 	pr_debug("[SHUB] " fmt "\n", ##__VA_ARGS__); \
@@ -55,6 +54,8 @@
 #define WORD_TO_HIGH(w) ((u8)(((w) >>8 ) & 0xff))
 
 #define ABS(a) ((a) > 0 ? (a) : -(a))
+#define MAX(a,b) ((a) > (b) ? (a) : (b))
+#define MIN(a,b) ((a) < (b) ? (a) : (b))
 
 #define BITS_PER_BYTE           8
 

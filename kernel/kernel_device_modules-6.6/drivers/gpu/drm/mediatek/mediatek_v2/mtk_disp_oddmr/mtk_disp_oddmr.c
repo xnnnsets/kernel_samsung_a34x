@@ -19,7 +19,6 @@
 #include <linux/soc/mediatek/mtk-cmdq-ext.h>
 #include <linux/uaccess.h>
 #include <uapi/drm/mediatek_drm.h>
-#include <linux/minmax.h>
 
 #include "../mtk_drm_crtc.h"
 #include "../mtk_drm_ddp_comp.h"
@@ -471,6 +470,7 @@
 #define DISP_ODDMR_REG_Y_REMAIN2_INI		(0x3D4)//bit 0-12
 //#define DISP_ODDMR_TOP_CRP_BYPASS			(0x1DB)//bit 0
 
+
 /* DBI&DMR in mt6991 */
 // mt6991 DBI&DMR TOP CTL
 #define MT6991_DISP_ODDMR_TOP_CTR_1					0x004
@@ -718,6 +718,7 @@ static uint32_t g_od_udma_merge_lines_cand[] = {
 	1, 2, 4, 6, 8, 10, 12, 14, 16,
 };
 
+#define MIN(a,b) (((a)<(b))?(a):(b))
 #define OFFSET(m, n) ((m > n) ? (m - n) : 0)
 
 static unsigned char lookup[16] = {

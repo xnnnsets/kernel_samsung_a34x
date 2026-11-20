@@ -2965,7 +2965,7 @@ bool is_blocked(struct otg_notify *n, int type)
 		unl_info("%s cause:usb_restrict\n", __func__);
 		goto end2;
 	}
-
+		
 	if (!n) {
 		unl_err("%s otg_notify is null\n", __func__);
 		goto end;

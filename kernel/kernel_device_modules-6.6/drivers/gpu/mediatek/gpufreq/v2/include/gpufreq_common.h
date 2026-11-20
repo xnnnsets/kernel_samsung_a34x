@@ -7,7 +7,6 @@
 #define __GPUFREQ_COMMON_H__
 
 #include <linux/bits.h>
-#include <linux/minmax.h>
 #if IS_ENABLED(CONFIG_MTK_AEE_IPANIC) && IS_ENABLED(CONFIG_MTK_AEE_FEATURE)
 #include <mt-plat/mboot_params.h>
 #endif
@@ -42,6 +41,12 @@
 		.addr = _addr,                 \
 		.val = _val,                   \
 	}
+#ifndef MAX
+#define MAX(x, y) (((x) < (y)) ? (y) : (x))
+#endif
+#ifndef MIN
+#define MIN(x, y) (((x) < (y)) ? (x) : (y))
+#endif
 #ifndef ARRAY_ASSIGN
 #define ARRAY_ASSIGN(dst, src, len)     (memcpy(dst, src, sizeof((dst)[0]) * len))
 #endif

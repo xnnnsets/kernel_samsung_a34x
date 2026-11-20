@@ -13,7 +13,6 @@
 #include <linux/err.h>
 #include <linux/cpu.h>
 #include <linux/delay.h>
-#include <linux/minmax.h>
 
 #include "tcpci_core.h"
 #include "pd_dbg_info.h"
@@ -25,6 +24,10 @@
 #define PE_STATE_FULL_NAME	0
 
 #define TCPC_NORMAL_RP_DUTY	(308)		/* 30% */
+
+#ifndef MIN
+#define MIN(a, b)       (((a) < (b)) ? (a) : (b))
+#endif
 
 /* provide to TCPC interface */
 extern int tcpci_report_usb_port_attached(struct tcpc_device *tcpc);

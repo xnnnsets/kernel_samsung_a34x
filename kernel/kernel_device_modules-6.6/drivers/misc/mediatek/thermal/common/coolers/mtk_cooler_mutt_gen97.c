@@ -13,7 +13,6 @@
 #include <linux/err.h>
 #include <linux/spinlock.h>
 #include <linux/syscalls.h>
-#include <linux/minmax.h>
 #include "mt-plat/mtk_thermal_monitor.h"
 #include <mtk_ccci_common.h>
 #include <linux/uidgid.h>
@@ -24,6 +23,10 @@
 /****************************************************************************
  *  Macro Definitions
  ****************************************************************************/
+#ifndef MAX
+#define MAX(a, b)		((a) >= (b) ? (a) : (b))
+#endif
+
 /* TMC interface */
 #define MUTT_ACTIVATED_OFFSET		(16)
 #define MUTT_SUSPEND_OFFSET		(24)
