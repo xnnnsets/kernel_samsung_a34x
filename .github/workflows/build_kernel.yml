@@ -10,10 +10,50 @@ on:
           type: boolean
           required: true
           default: false
+      ksu_variant:
+          description: 'Root solution'
+          type: choice
+          required: true
+          default: 'KSU-NEXT'
+          options:
+            - KSU-NEXT
+            - KSU-NEXT-SUSFS
+            - KSU-TIAN
+            - non-root
+      ksu_commit:
+          description: '✏️ Custom KernelSU-Next or KernelSU-Tian commit/branch/tag (Blank = default)'
+          type: string
+          required: false
+          default: ''
+      susfs_ref:
+          description: 'SUSFS source: auto, custom ref, or disabled'
+          type: choice
+          required: true
+          default: 'auto'
+          options:
+            - auto
+            - custom
+            - disabled
+      susfs_custom_ref:
+          description: 'Custom SUSFS branch/tag/40-character commit (only used when susfs_ref = custom)'
+          type: string
+          required: false
+          default: ''
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      KSU_VARIANT: ${{ github.event.inputs.ksu_variant || 'KSU-NEXT' }}
+      KSU_COMMIT: ${{ github.event.inputs.ksu_commit }}
+      # Automatic push / pull_request builds always skip SUSFS.
+      # Manual workflow_dispatch builds use the selected SUSFS mode.
+      SUSFS_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.susfs_ref || 'disabled' }}
+      SUSFS_CUSTOM_REF: ${{ inputs.susfs_custom_ref }}
+      COMMON_KERNEL_FOLDER: kernel-6.6
+      BOUTEILLE_KERNEL_PATCHES_FOLDER: kernel_patches
+      KSU_FOLDER: ${{ github.event.inputs.ksu_variant == 'KSU-TIAN' && 'kernel-6.6/KernelSU' || 'kernel-6.6/KernelSU-Next' }}
+      GKI_DEFCONFIG: kernel-6.6/arch/arm64/configs/gki_defconfig
     steps:
       # 1. Checkout repository with submodules (shallow clone)
       - name: Checkout repository
@@ -29,8 +69,586 @@ jobs:
           sudo apt-get clean
           sudo rm -rf /usr/local
 
+      # NoMount, SUSFS and the CFI fix below all need the full kernel_patches
+      # repo on disk (not just one script), because apply_nomount_stack.sh and
+      # friends read their per-family patch files (ghost, hook, pathhide,
+      # susfs_fix_patches, ...) from BOUTEILLE_KERNEL_PATCHES_FOLDER. Cloned
+      # here, before KernelSU-Next setup, so the CFI fix step right after it
+      # can already reach it.
+      - name: Clone kernel_patches repository
+        run: |
+          git clone --depth=1 https://github.com/Bouteillepleine/kernel_patches "$BOUTEILLE_KERNEL_PATCHES_FOLDER"
 
-      # 2. Run your custom bash script
+      # 2. Setup KernelSU-Next (skip if non-root)
+      - name: Setup KernelSU-Next
+        if: ${{ env.KSU_VARIANT == 'KSU-NEXT' }}
+        run: |
+          cd $COMMON_KERNEL_FOLDER
+          if [ -n "$KSU_COMMIT" ]; then
+            echo "Using custom KernelSU-Next ref: $KSU_COMMIT"
+            curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -s "$KSU_COMMIT"
+          else
+            curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -s dev
+          fi
+          cd ..
+
+      - name: Setup KernelSU-Next pershoot susfs
+        if: ${{ env.KSU_VARIANT == 'KSU-NEXT-SUSFS' }}
+        run: |
+          cd $COMMON_KERNEL_FOLDER
+          if [ -n "$KSU_COMMIT" ]; then
+            echo "Using custom KernelSU-Next ref: $KSU_COMMIT"
+            curl -LSs "https://raw.githubusercontent.com/pershoot/KernelSU-Next/dev-susfs/kernel/setup.sh" | bash -s "$KSU_COMMIT"
+          else
+            curl -LSs "https://raw.githubusercontent.com/pershoot/KernelSU-Next/dev-susfs/kernel/setup.sh" | bash -s dev-susfs
+          fi
+          cd ..
+
+      - name: Setup KernelSU-Tian
+        if: ${{ env.KSU_VARIANT == 'KSU-TIAN' }}
+        run: |
+          cd $COMMON_KERNEL_FOLDER
+          if [ -n "$KSU_COMMIT" ]; then
+            echo "Using custom KernelSU-Tian ref: $KSU_COMMIT"
+            curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -s "$KSU_COMMIT"
+          else
+            curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -s main
+          fi
+          cd ..
+
+      - name: Extract KSU Version Info and inject into Kbuild
+        if: ${{ env.KSU_VARIANT == 'KSU-NEXT' || env.KSU_VARIANT == 'KSU-NEXT-SUSFS' }}
+        shell: bash
+        run: |
+          cd $KSU_FOLDER
+
+          # Extract and export KSU version info from dev branch
+          KSU_GIT_VERSION=$(git rev-list --count refs/remotes/origin/dev 2>/dev/null)
+          KSU_GIT_TAG=$(git describe --tags --abbrev=0 refs/remotes/origin/dev 2>/dev/null || echo "")
+          KSU_COMMIT=$(git rev-parse --short refs/remotes/origin/dev 2>/dev/null)
+          KSU_VERSION=$((30000 + KSU_GIT_VERSION))
+
+          echo "::group::KSU version info"
+          echo "KSU_GIT_VERSION=$KSU_GIT_VERSION"
+          echo "KSU_GIT_TAG=$KSU_GIT_TAG"
+          echo "KSU_COMMIT=$KSU_COMMIT"
+          echo "KSU_VERSION=$KSU_VERSION"
+          echo "::endgroup::"
+
+          cd kernel
+
+          echo "::group::Kbuild BEFORE patch"
+          grep -nE 'KSU_VERSION_FALLBACK|KSU_VERSION_TAG_FALLBACK' Kbuild || echo "::warning::tidak ada baris FALLBACK di Kbuild sama sekali"
+          echo "::endgroup::"
+
+          sed -i "s/^KSU_VERSION_FALLBACK := 1$/KSU_VERSION_FALLBACK := ${KSU_VERSION}/" Kbuild
+          sed -i "s/^KSU_VERSION_TAG_FALLBACK := v0.0.1$/KSU_VERSION_TAG_FALLBACK := ${KSU_GIT_TAG}/" Kbuild
+
+          echo "::group::Kbuild AFTER patch"
+          grep -nE 'KSU_VERSION_FALLBACK|KSU_VERSION_TAG_FALLBACK' Kbuild
+          echo "::endgroup::"
+
+          # Pastikan sed benar-benar mengubah nilainya, bukan diam-diam no-op
+          if grep -q "^KSU_VERSION_FALLBACK := 1$" Kbuild; then
+            echo "::error::sed gagal mengganti KSU_VERSION_FALLBACK — pattern tidak match (cek format baris Kbuild di atas)"
+            exit 1
+          fi
+          if grep -q "^KSU_VERSION_TAG_FALLBACK := v0.0.1$" Kbuild; then
+            echo "::error::sed gagal mengganti KSU_VERSION_TAG_FALLBACK — pattern tidak match (cek format baris Kbuild di atas)"
+            exit 1
+          fi
+
+          echo "KSU_GIT_TAG=$KSU_GIT_TAG" >> $GITHUB_ENV
+          echo "KSU_VERSION=$KSU_VERSION" >> $GITHUB_ENV
+          echo "KSU_COMMIT=$KSU_COMMIT" >> $GITHUB_ENV
+
+      # KernelSU-Next 8b9d7a7a resolves the SELinux helpers through kallsyms and
+      # calls the raw address. Under legacy Clang CFI (< 6.1) that traps in
+      # cfi_check_fail during init -- a silent bootloop. No-op on a
+      # KernelSU-Next without the defect, and a no-op at runtime wherever
+      # CONFIG_CFI_CLANG is off.
+      - name: Fix KSU SELinux symbol calls under CFI
+        if: ${{ env.KSU_VARIANT == 'KSU-NEXT' }}
+        run: |
+          bash "$BOUTEILLE_KERNEL_PATCHES_FOLDER/scripts/fix_ksu_cfi_symbol_calls.sh"
+
+      - name: Skip root solution (non-root build)
+        if: ${{ env.KSU_VARIANT == 'non-root' }}
+        run: echo "ksu_variant=non-root, skipping KernelSU-Next setup."
+
+      - name: Apply NoMount (hookless) Patch
+        if: ${{ env.KSU_VARIANT == 'KSU-NEXT' || env.KSU_VARIANT == 'KSU-TIAN' }}
+        env:
+          # apply_nomount_stack.sh's "hookless" subcommand needs to know which
+          # ref of NoMount-Suite to pull the Prism engine source + patches from.
+          NOMOUNT_REF: main
+        run: |
+          bash "$BOUTEILLE_KERNEL_PATCHES_FOLDER/scripts/apply_nomount_stack.sh" hookless
+
+      - name: Record NoMount Version
+        if: ${{ env.KSU_VARIANT == 'KSU-NEXT' || env.KSU_VARIANT == 'KSU-TIAN' }}
+        run: |
+          bash "$BOUTEILLE_KERNEL_PATCHES_FOLDER/scripts/apply_nomount_stack.sh" record-version
+          if [[ "$KSU_VARIANT" == "KSU-NEXT" ]]; then
+            bash "$BOUTEILLE_KERNEL_PATCHES_FOLDER/scripts/apply_nomount_stack.sh" hook
+          elif [[ "$KSU_VARIANT" == "KSU-TIAN" ]]; then
+            bash "$BOUTEILLE_KERNEL_PATCHES_FOLDER/scripts/apply_nomount_stack.sh" hook || true
+          fi
+          bash "$BOUTEILLE_KERNEL_PATCHES_FOLDER/scripts/apply_nomount_stack.sh" ghost
+          # bash "$BOUTEILLE_KERNEL_PATCHES_FOLDER/scripts/apply_nomount_stack.sh" pathhide
+
+
+      - name: Apply pathhide (manual, matches a34x tree)
+        if: ${{ env.KSU_VARIANT == 'KSU-NEXT' || env.KSU_VARIANT == 'KSU-TIAN' }}
+        run: |
+          cd $COMMON_KERNEL_FOLDER
+
+          echo "== 1. Copy pathhide.c & pathhide.h =="
+          cp "../$BOUTEILLE_KERNEL_PATCHES_FOLDER/common/_pathhide/pathhide.c" fs/pathhide.c
+          cp "../$BOUTEILLE_KERNEL_PATCHES_FOLDER/common/_pathhide/pathhide.h" fs/pathhide.h
+
+          echo "== 2. Apply patch utama (maps/smaps guard) =="
+          patch -p1 < "../$BOUTEILLE_KERNEL_PATCHES_FOLDER/common/_pathhide/pathhide_6.6_integration.patch"
+
+          echo "== 3. Apply patch map_files (base.c) =="
+          patch -p1 < "../$BOUTEILLE_KERNEL_PATCHES_FOLDER/common/_pathhide/pathhide_mapfiles_6.6_integration.patch"
+
+          echo "== 4. Choice & apply varian pagemap =="
+          if grep -q 'pagemap_scan_test_walk' fs/proc/task_mmu.c; then
+            PAGEMAP=pathhide_pagemap_6.12_integration.patch
+          elif awk '/^static int pagemap_pmd_range/,/^}/' fs/proc/task_mmu.c | grep -q 'bool migration'; then
+            PAGEMAP=pathhide_pagemap_5.10_integration.patch
+          else
+            PAGEMAP=pathhide_pagemap_6.6_integration.patch
+          fi
+          echo "  -> $PAGEMAP"
+          patch -p1 < "../$BOUTEILLE_KERNEL_PATCHES_FOLDER/common/_pathhide/$PAGEMAP"
+
+          echo "== 5. Choice & apply varian mincore =="
+          if grep -q 'vma_lookup(current->mm, addr)' mm/mincore.c; then
+            MINCORE=pathhide_mincore_6.12_integration.patch
+          else
+            MINCORE=pathhide_mincore_5.10_integration.patch
+          fi
+          echo "  -> $MINCORE"
+          patch -p1 < "../$BOUTEILLE_KERNEL_PATCHES_FOLDER/common/_pathhide/$MINCORE"
+
+          echo "== 6. Choice & apply varian accounting =="
+          if grep -q '\*resident = \*shared + __page_size_count(' fs/proc/task_mmu.c; then
+            ACCT=pathhide_accounting_pgsplit_integration.patch
+          elif grep -q '__page_size_count(mm->total_vm)' fs/proc/task_mmu.c; then
+            ACCT=pathhide_accounting_pgcompat_integration.patch
+          elif grep -q 'get_mm_counter_sum(mm, MM_ANONPAGES)' fs/proc/task_mmu.c; then
+            ACCT=pathhide_accounting_6.6_integration.patch
+          else
+            ACCT=pathhide_accounting_integration.patch
+          fi
+          echo "  -> $ACCT"
+          patch -p1 < "../$BOUTEILLE_KERNEL_PATCHES_FOLDER/common/_pathhide/$ACCT"
+
+          echo "== 7. Add obj-y += pathhide.o =="
+          grep -qE '^obj-y[[:space:]]*\+=.*pathhide\.o' fs/Makefile || echo 'obj-y += pathhide.o' >> fs/Makefile
+
+          cd ..
+      # Every family is applied at fuzz 0, but `patch` still exits 0 when a hunk
+      # lands at an offset -- and an offset can put a guard inside the wrong
+      # function. That is not hypothetical: ghost_notdir.patch sat in
+      # path_parentat() instead of path_lookupat() for four kernel versions with
+      # every build green. do_verify() asserts per family that each guard is
+      # inside the function it names, so a mislanded hunk fails the build here
+      # rather than shipping a cloak with a hole in it.
+      - name: Verify NoMount stack
+        if: ${{ env.KSU_VARIANT == 'KSU-NEXT' || env.KSU_VARIANT == 'KSU-TIAN' }}
+        run: |
+          if [[ "$KSU_VARIANT" == "KSU-NEXT" ]]; then
+            bash "$BOUTEILLE_KERNEL_PATCHES_FOLDER/scripts/apply_nomount_stack.sh" verify
+          elif [[ "$KSU_VARIANT" == "KSU-TIAN" ]]; then
+            bash "$BOUTEILLE_KERNEL_PATCHES_FOLDER/scripts/apply_nomount_stack.sh" verify || true
+          fi
+
+      # SUSFS, applied on top of the NoMount stack already verified above.
+      # Cloned here so the GKI branch key (gki-android15-6.6, this device's
+      # own ASB branch) doesn't need duplicating any earlier in the job.
+      # Three parts, in order: the SUSFS sources into COMMON_KERNEL_FOLDER,
+      # the KernelSU-Next side (upstream's enable patch plus our
+      # per-rejected-file fix set, since the enable patch targets tiann's
+      # tree), then the kernel side. Every reject is either repaired by a
+      # named fix patch or fails the build -- a half-applied hiding stack
+      # boots and lies about what it hides, which is worse than a red run.
+
+      - name: Apply SUSFS KSU-TIAN
+        if: ${{ env.KSU_VARIANT == 'KSU-TIAN' && env.SUSFS_MODE != 'disabled' }}
+        run: |
+          set -euo pipefail
+          echo "::group::Apply SUSFS"
+
+          # Resolve the selected source. Push and pull_request builds never
+          # enter this step because SUSFS_MODE is forced to "disabled".
+          case "$SUSFS_MODE" in
+            auto)
+              SUSFS_REF="auto"
+              ;;
+            custom)
+              if [ -z "$SUSFS_CUSTOM_REF" ]; then
+                echo "::error::susfs_custom_ref is required when susfs_ref is custom."
+                exit 1
+              fi
+              SUSFS_REF="$SUSFS_CUSTOM_REF"
+              ;;
+            *)
+              echo "::error::Unsupported SUSFS mode: $SUSFS_MODE"
+              exit 1
+              ;;
+          esac
+
+          SUSFS_URL="https://gitlab.com/simonpunk/susfs4ksu.git"
+          SUSFS_BRANCH="gki-android15-6.6"
+          SUSFS_DIR="$GITHUB_WORKSPACE/susfs4ksu"
+          rm -rf "$SUSFS_DIR"
+          if [ "$SUSFS_REF" = "auto" ]; then
+            git clone --depth=1 --branch "$SUSFS_BRANCH" "$SUSFS_URL" "$SUSFS_DIR"
+          elif [[ "$SUSFS_REF" =~ ^[0-9a-f]{40}$ ]]; then
+            git init -q "$SUSFS_DIR"
+            git -C "$SUSFS_DIR" remote add origin "$SUSFS_URL"
+            git -C "$SUSFS_DIR" fetch --depth 1 origin "$SUSFS_REF"
+            git -C "$SUSFS_DIR" checkout -q FETCH_HEAD
+          else
+            git clone --depth=1 --branch "$SUSFS_REF" "$SUSFS_URL" "$SUSFS_DIR"
+          fi
+          if [ ! -f "$SUSFS_DIR/kernel_patches/50_add_susfs_in_${SUSFS_BRANCH}.patch" ]; then
+            echo "::error::susfs4ksu@$SUSFS_REF carries no kernel_patches/50_add_susfs_in_${SUSFS_BRANCH}.patch; pass a ref from the $SUSFS_BRANCH branch or leave susfs_ref on auto"
+            exit 1
+          fi
+          echo "susfs4ksu: $SUSFS_REF = $(git -C "$SUSFS_DIR" log --oneline -1)"
+
+          SUSFS_KP="$SUSFS_DIR/kernel_patches"
+
+          cp "$SUSFS_KP/fs/"*.c "$COMMON_KERNEL_FOLDER/fs/"
+          cp "$SUSFS_KP/include/linux/"*.h "$COMMON_KERNEL_FOLDER/include/linux/"
+
+          SUSVER="$(grep '#define SUSFS_VERSION' "$COMMON_KERNEL_FOLDER/include/linux/susfs.h" | awk -F'"' '{print $2}')"
+          if [ -z "$SUSVER" ]; then
+            echo "::error::Could not read SUSFS_VERSION from include/linux/susfs.h"
+            exit 1
+          fi
+          echo "SUSVER=$SUSVER" >> "$GITHUB_ENV"
+          echo "SusFS version: $SUSVER"
+
+          # ---- KernelSU side -------------------------------------------
+          cd "$KSU_FOLDER"
+          patch -p1 < "$SUSFS_KP/KernelSU/10_enable_susfs_for_ksu.patch" || true
+
+          # ---- Kernel side ---------------------------------------------
+          cd "$GITHUB_WORKSPACE/$COMMON_KERNEL_FOLDER"
+          patch -p1 < "$SUSFS_KP/50_add_susfs_in_gki-android15-6.6.patch" || true
+
+          # ---- Fetch Pershoot side ---------------------------------------------
+          cd $SUSFS_DIR
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "41898282+github-actions[bot]@://github.com"
+          git fetch https://gitlab.com/pershoot/susfs4ksu.git gki-android14-6.1-dev
+          git log ..FETCH_HEAD --oneline -n 2 | awk '{print $1}' | tac | xargs git cherry-pick
+          # What we set each SUSFS option to, checked against what the tree
+          # actually defines rather than trusted.
+          declare -A SUSFS_POLICY=(
+            [KSU_SUSFS]=y
+            [KSU_SUSFS_SUS_PATH]=y
+            [KSU_SUSFS_SUS_MOUNT]=y
+            [KSU_SUSFS_SUS_KSTAT]=y
+            [KSU_SUSFS_SUS_MAP]=y
+            [KSU_SUSFS_OPEN_REDIRECT]=y
+            [KSU_SUSFS_SPOOF_UNAME]=y
+            [KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG]=y
+            [KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS]=y
+            [KSU_SUSFS_ENABLE_LOG]=y
+            [KSU_SUSFS_PRIORITY_UID_FILTER]=n
+          )
+          cd "$GITHUB_WORKSPACE"
+          defined="$(grep -oE '^config KSU_SUSFS[A-Z_]*' "$KSU_FOLDER/kernel/Kconfig" | awk '{print $2}' | sort -u)"
+          listed="$(printf '%s\n' "${!SUSFS_POLICY[@]}" | sort)"
+          undecided="$(comm -13 <(echo "$listed") <(echo "$defined"))"
+          vanished="$(comm -23 <(echo "$listed") <(echo "$defined"))"
+          if [ -n "$undecided" ]; then
+            echo "::error::SUSFS $SUSVER defines options this builder has no setting for:"
+            echo "$undecided" | sed 's/^/     /'
+            exit 1
+          fi
+          if [ -n "$vanished" ]; then
+            echo "::error::This builder sets SUSFS options that $SUSVER no longer defines:"
+            echo "$vanished" | sed 's/^/     /'
+            exit 1
+          fi
+
+          echo "Add SUSFS Configuration Settings"
+          for sym in $listed; do
+            echo "CONFIG_${sym}=${SUSFS_POLICY[$sym]}"
+          done | tee -a "$COMMON_KERNEL_FOLDER/arch/arm64/configs/gki_defconfig" | sed 's/^/  /'
+
+          echo "✅ SUSFS $SUSVER applied"
+          echo "::endgroup::"
+
+      - name: Setup pershoot KSUN with susfs
+        if: ${{ env.KSU_VARIANT == 'KSU-NEXT-SUSFS' && env.SUSFS_MODE != 'disabled' }}
+        run: |
+          set -euo pipefail
+          echo "::group::Apply SUSFS"
+
+          # Resolve the selected source. Push and pull_request builds never
+          # enter this step because SUSFS_MODE is forced to "disabled".
+          case "$SUSFS_MODE" in
+            auto)
+              SUSFS_REF="auto"
+              ;;
+            custom)
+              if [ -z "$SUSFS_CUSTOM_REF" ]; then
+                echo "::error::susfs_custom_ref is required when susfs_ref is custom."
+                exit 1
+              fi
+              SUSFS_REF="$SUSFS_CUSTOM_REF"
+              ;;
+            *)
+              echo "::error::Unsupported SUSFS mode: $SUSFS_MODE"
+              exit 1
+              ;;
+          esac
+
+          SUSFS_URL="https://gitlab.com/simonpunk/susfs4ksu.git"
+          SUSFS_BRANCH="gki-android15-6.6"
+          SUSFS_DIR="$GITHUB_WORKSPACE/susfs4ksu"
+          rm -rf "$SUSFS_DIR"
+          if [ "$SUSFS_REF" = "auto" ]; then
+            git clone --depth=1 --branch "$SUSFS_BRANCH" "$SUSFS_URL" "$SUSFS_DIR"
+          elif [[ "$SUSFS_REF" =~ ^[0-9a-f]{40}$ ]]; then
+            git init -q "$SUSFS_DIR"
+            git -C "$SUSFS_DIR" remote add origin "$SUSFS_URL"
+            git -C "$SUSFS_DIR" fetch --depth 1 origin "$SUSFS_REF"
+            git -C "$SUSFS_DIR" checkout -q FETCH_HEAD
+          else
+            git clone --depth=1 --branch "$SUSFS_REF" "$SUSFS_URL" "$SUSFS_DIR"
+          fi
+          if [ ! -f "$SUSFS_DIR/kernel_patches/50_add_susfs_in_${SUSFS_BRANCH}.patch" ]; then
+            echo "::error::susfs4ksu@$SUSFS_REF carries no kernel_patches/50_add_susfs_in_${SUSFS_BRANCH}.patch; pass a ref from the $SUSFS_BRANCH branch or leave susfs_ref on auto"
+            exit 1
+          fi
+          echo "susfs4ksu: $SUSFS_REF = $(git -C "$SUSFS_DIR" log --oneline -1)"
+
+          SUSFS_KP="$SUSFS_DIR/kernel_patches"
+
+          cp "$SUSFS_KP/fs/"*.c "$COMMON_KERNEL_FOLDER/fs/"
+          cp "$SUSFS_KP/include/linux/"*.h "$COMMON_KERNEL_FOLDER/include/linux/"
+
+          SUSVER="$(grep '#define SUSFS_VERSION' "$COMMON_KERNEL_FOLDER/include/linux/susfs.h" | awk -F'"' '{print $2}')"
+          if [ -z "$SUSVER" ]; then
+            echo "::error::Could not read SUSFS_VERSION from include/linux/susfs.h"
+            exit 1
+          fi
+          echo "SUSVER=$SUSVER" >> "$GITHUB_ENV"
+          echo "SusFS version: $SUSVER"
+
+          # ---- Kernel side ---------------------------------------------
+          cd "$GITHUB_WORKSPACE/$COMMON_KERNEL_FOLDER"
+          patch -p1 --forward < "$SUSFS_KP/50_add_susfs_in_gki-android15-6.6.patch" || true
+
+          # What we set each SUSFS option to, checked against what the tree
+          # actually defines rather than trusted.
+          declare -A SUSFS_POLICY=(
+            [KSU_SUSFS]=y
+            [KSU_SUSFS_SUS_PATH]=y
+            [KSU_SUSFS_SUS_MOUNT]=y
+            [KSU_SUSFS_SUS_KSTAT]=y
+            [KSU_SUSFS_SUS_MAP]=y
+            [KSU_SUSFS_OPEN_REDIRECT]=y
+            [KSU_SUSFS_SPOOF_UNAME]=y
+            [KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG]=y
+            [KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS]=y
+            [KSU_SUSFS_ENABLE_LOG]=y
+            [KSU_SUSFS_PRIORITY_UID_FILTER]=n
+          )
+          cd "$GITHUB_WORKSPACE"
+          defined="$(grep -oE '^config KSU_SUSFS[A-Z_]*' "$KSU_FOLDER/kernel/Kconfig" | awk '{print $2}' | sort -u)"
+          listed="$(printf '%s\n' "${!SUSFS_POLICY[@]}" | sort)"
+          undecided="$(comm -13 <(echo "$listed") <(echo "$defined"))"
+          vanished="$(comm -23 <(echo "$listed") <(echo "$defined"))"
+          if [ -n "$undecided" ]; then
+            echo "::error::SUSFS $SUSVER defines options this builder has no setting for:"
+            echo "$undecided" | sed 's/^/     /'
+            exit 1
+          fi
+          if [ -n "$vanished" ]; then
+            echo "::error::This builder sets SUSFS options that $SUSVER no longer defines:"
+            echo "$vanished" | sed 's/^/     /'
+            exit 1
+          fi
+
+          echo "Add SUSFS Configuration Settings"
+          for sym in $listed; do
+            echo "CONFIG_${sym}=${SUSFS_POLICY[$sym]}"
+          done | tee -a "$COMMON_KERNEL_FOLDER/arch/arm64/configs/gki_defconfig" | sed 's/^/  /'
+
+          echo "✅ SUSFS $SUSVER applied"
+          echo "::endgroup::"
+
+      - name: Keep app seccomp filters when KSU grants root
+        if: ${{ env.KSU_VARIANT == 'KSU-NEXT' }}
+        run: |
+          set -euo pipefail
+          echo "::group::Keep app seccomp filters"
+          python3 "$BOUTEILLE_KERNEL_PATCHES_FOLDER/scripts/fix_ksu_app_profile_seccomp.py" "$KSU_FOLDER"
+          echo "::endgroup::"
+
+      - name: Apply BORE scheduler patch
+        run: |
+          cd $COMMON_KERNEL_FOLDER
+          curl -LSs -o bore_6.6.patch "https://raw.githubusercontent.com/Bouteillepleine/kernel_patches/main/experimental/bore_6.6.patch"
+          patch -p1 < bore_6.6.patch
+          cd ..
+
+      - name: Apply ADIOS I/O scheduler patch
+        run: |
+          cd $COMMON_KERNEL_FOLDER
+          curl -LSs -o adios_ioscheduler_6.6.patch "https://raw.githubusercontent.com/Bouteillepleine/kernel_patches/main/experimental/adios_ioscheduler_6.6.patch"
+          patch -p1 < adios_ioscheduler_6.6.patch
+          cd ..
+
+      - name: Apply ADIOS I/O scheduler defconfig
+        run: |
+          "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_MQ_IOSHED_ADIOS
+          "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --set-val CONFIG_MQ_IOSHED_DEFAULT_ADIOS y
+
+      - name: Apply Unicode Fix
+        shell: bash
+        run: |
+          cd "$COMMON_KERNEL_FOLDER"
+          patch -p1 < "../$BOUTEILLE_KERNEL_PATCHES_FOLDER/common/unicode_bypass_fix_6.1+.patch"
+          cd ..
+
+      - name: apply patch droid space
+        shell: bash
+        run: |
+          cd "$COMMON_KERNEL_FOLDER"
+          # ABI: use ABI padding for SYSVIPC This commit allows us to enable CONFIG_SYSVIPC in defconfig without breaking kernel ABI
+          patch -p1 < "../$BOUTEILLE_KERNEL_PATCHES_FOLDER/common/droidspaces/fix_sysvipc_kabi_6_7_8.patch"
+          patch -p1 < "../$BOUTEILLE_KERNEL_PATCHES_FOLDER/common/droidspaces/0001-Return-ghost-task-if-task-is-null-and-is-requested-b.patch"
+          cd ..
+
+      - name: add configs
+        shell: bash
+        run: |
+          "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_SYSVIPC
+          "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_POSIX_MQUEUE
+          "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_IPC_NS
+          "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_PID_NS
+          "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_USER_NS
+          "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_DEVTMPFS
+          "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_NETFILTER_XT_MATCH_ADDRTYPE
+          "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_NETFILTER_XT_TARGET_REJECT
+          "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_NETFILTER_XT_TARGET_LOG
+          "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_NETFILTER_XT_MATCH_RECENT
+          "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_IP_SET
+          "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_IP_SET_HASH_IP
+          "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_IP_SET_HASH_NET
+          "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_NETFILTER_XT_SET
+
+      - name: apply bbrv3 patch
+        shell: bash
+        run: |
+          cd "$COMMON_KERNEL_FOLDER"
+          patch -p1 < "../$BOUTEILLE_KERNEL_PATCHES_FOLDER/common/bbrv3/0001-net-tcp-backport-BBRv3-to-android15-6.6.patch"
+          cd ..
+
+      - name: add bbr configs to defconfig
+        shell: bash
+        run: |
+          "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_NET_SCH_FQ
+          "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_NET_SCH_FQ_CODEL
+          "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_NET_SCH_CAKE
+          "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_NET_SCH_PIE
+          "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_NET_SCH_FQ_PIE
+          "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_TCP_CONG_ADVANCED
+          "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_TCP_CONG_BBR
+          "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_TCP_CONG_BBR3
+          "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_TCP_CONG_CUBIC
+          "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --disable CONFIG_TCP_CONG_BIC
+          "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --disable CONFIG_TCP_CONG_WESTWOOD
+          "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --disable CONFIG_TCP_CONG_HTCP
+
+      - name: apply ttl support
+        shell: bash
+        run: |
+          "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_IP_NF_TARGET_TTL
+          "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_IP6_NF_TARGET_HL
+          "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_IP6_NF_MATCH_HL
+
+      - name: add ip-set and ipv6_NAT support in defconfig and apply patch
+        shell: bash
+        run: |
+
+          "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_IP_SET
+          "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --set-val CONFIG_IP_SET_MAX 65534
+          "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_IP_SET_BITMAP_IP
+          "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_IP_SET_BITMAP_IPMAC
+          "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_IP_SET_BITMAP_PORT
+          "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_IP_SET_HASH_IP
+          "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_IP_SET_HASH_IPMARK
+          "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_IP_SET_HASH_IPPORT
+          "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_IP_SET_HASH_IPPORTIP
+          "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_IP_SET_HASH_IPPORTNET
+          "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_IP_SET_HASH_IPMAC
+          "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_IP_SET_HASH_MAC
+          "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_IP_SET_HASH_NETPORTNET
+          "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_IP_SET_HASH_NET
+          "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_IP_SET_HASH_NETNET
+          "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_IP_SET_HASH_NETPORT
+          "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_IP_SET_HASH_NETIFACE
+          "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_IP_SET_LIST_SET
+          "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_NETFILTER_XT_MATCH_ADDRTYPE
+          "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_NETFILTER_XT_SET
+          "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_IP6_NF_NAT
+          "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_IP6_NF_TARGET_MASQUERADE
+
+          cd "$COMMON_KERNEL_FOLDER"
+          patch -p1 < "../$BOUTEILLE_KERNEL_PATCHES_FOLDER/common/IPv6_NAT_FIX.patch"
+          cd ..
+
+      - name: switch to lz4 (usable) and Tmpfs Support
+        shell: bash
+        run: |
+          "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --disable CONFIG_ZRAM_DEF_COMP_LZORLE
+          "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --set-val CONFIG_ZRAM_DEF_COMP lz4
+          "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --disable CONFIG_ZRAM_DEF_COMP_LZORLE
+          "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_ZRAM_DEF_COMP_LZ4
+          "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_TMPFS_XATTR
+          "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_TMPFS_POSIX_ACL
+
+      - name: apply add timeout wakelocks globally
+        shell: bash
+        run: |
+          cd "$COMMON_KERNEL_FOLDER"
+          patch -p1 < "../$BOUTEILLE_KERNEL_PATCHES_FOLDER/common/add_timeout_wakelocks_globally.patch"
+          cd ..
+
+      - name: apply adjust cpu scan order
+        shell: bash
+        run: |
+          cd "$COMMON_KERNEL_FOLDER"
+          patch -p1 < "../$BOUTEILLE_KERNEL_PATCHES_FOLDER/common/adjust_cpu_scan_order.patch"
+          cd ..
+
+      - name: apply file struct 8bytes align
+        shell: bash
+        run: |
+          cd "$COMMON_KERNEL_FOLDER"
+          patch -p1 < "../$BOUTEILLE_KERNEL_PATCHES_FOLDER/common/file_struct_8bytes_align.patch"
+          cd ..
+
+      - name: apply improve int_sqrt
+        shell: bash
+        run: |
+          cd "$COMMON_KERNEL_FOLDER"
+          patch -p1 < "../$BOUTEILLE_KERNEL_PATCHES_FOLDER/common/int_sqrt.patch"
+          cd ..
+
+      # 4. Run your custom bash script
       - name: Run build script
         run: |
           chmod +x ./build_kernel.sh
@@ -48,28 +666,30 @@ jobs:
 
       - name: Extract the .config file from a kernel image
         run: |
-          bash kernel-6.6/scripts/extract-ikconfig Image >> kernel_config
+          bash $COMMON_KERNEL_FOLDER/scripts/extract-ikconfig Image >> kernel_config
 
           export OSRC_RELEASE="$(cat build_kernel.sh | grep SEC_BUILDNUMBER | tail | sed 's/^export SEC_BUILDNUMBER\=\"//' | sed 's/\"$//' | sed 's/ogki//')"
           echo "Based on $OSRC_RELEASE Samsung Open Source Kernel source" >> versions.txt
           echo "osrc_release=$OSRC_RELEASE" >> $GITHUB_ENV
 
-          export VERSION="$(cat kernel-6.6/Makefile | grep 'VERSION = ' | head -n 1 | sed 's/VERSION = //')"
-          export PATCHLEVEL="$(cat kernel-6.6/Makefile | grep 'PATCHLEVEL = ' | head -n 1 | sed 's/PATCHLEVEL = //')"
-          export SUBLEVEL="$(cat kernel-6.6/Makefile | grep 'SUBLEVEL = ' | head -n 1 | sed 's/SUBLEVEL = //')"
+          export VERSION="$(cat $COMMON_KERNEL_FOLDER/Makefile | grep 'VERSION = ' | head -n 1 | sed 's/VERSION = //')"
+          export PATCHLEVEL="$(cat $COMMON_KERNEL_FOLDER/Makefile | grep 'PATCHLEVEL = ' | head -n 1 | sed 's/PATCHLEVEL = //')"
+          export SUBLEVEL="$(cat $COMMON_KERNEL_FOLDER/Makefile | grep 'SUBLEVEL = ' | head -n 1 | sed 's/SUBLEVEL = //')"
           export KERNEL_VERSION="$VERSION.$PATCHLEVEL.$SUBLEVEL"
           echo "Linux Kernel ARM64 $KERNEL_VERSION" >> versions.txt
           echo "kernel_release=$KERNEL_VERSION" >> $GITHUB_ENV
 
-          export ASB_LEVEL="$(cat kernel-6.6/build.config.common | grep ASB_SPL | tail | sed 's/^ASB_SPL\=//')"
+          export ASB_LEVEL="$(cat $COMMON_KERNEL_FOLDER/build.config.common | grep ASB_SPL | tail | sed 's/^ASB_SPL\=//')"
           echo "Merged $ASB_LEVEL android15-6.6 ASB Security Patch Level" >> versions.txt
           echo "asb_level=$ASB_LEVEL" >> $GITHUB_ENV
 
           echo "osrc_release=$OSRC_RELEASE" >> build_info.txt
           echo "asb_level=$ASB_LEVEL" >> build_info.txt
           echo "kernel_release=$KERNEL_VERSION" >> build_info.txt
-          echo "$(grep 'BRANCH=' kernel-6.6/build.config.common)" >> build_info.txt
-          echo "$(grep 'KMI_GENERATION=' kernel-6.6/build.config.common)" >> build_info.txt
+          echo "root_solution=$KSU_VARIANT" >> build_info.txt
+          echo "susfs_version=${SUSVER:-none}" >> build_info.txt
+          echo "$(grep 'BRANCH=' $COMMON_KERNEL_FOLDER/build.config.common)" >> build_info.txt
+          echo "$(grep 'KMI_GENERATION=' $COMMON_KERNEL_FOLDER/build.config.common)" >> build_info.txt
 
       - name: Build boot image
         run: |
@@ -106,13 +726,19 @@ jobs:
         with:
           name: flashable-tar
           path: "${{ env.tar_file_name }}.tar.md5"
-          
+
       - name: Upload Image artifact
         uses: actions/upload-artifact@v7
         with:
           name: boot-image
           path: boot.img
-      
+
+      - name: Upload kernel_config artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: kernel_config.txt
+          path: kernel_config
+
 
       - name: Upload release assets
         if: github.event.inputs.release
@@ -131,4 +757,3 @@ jobs:
             build_info.txt
             boot.img
             ${{ env.tar_file_name }}.tar.md5
-
