@@ -6,14 +6,153 @@ on:
   workflow_dispatch:
     inputs:
       release:
-          description: '🚀 Make a release?'
+          description: '🚀 Make a release? (one release per selected variant)'
           type: boolean
           required: true
           default: false
+      clear_cache:
+          description: '🧹 Delete ALL existing build caches before building (cold build)'
+          type: boolean
+          required: false
+          default: false
+      variant_all:
+          description: '✅ Build ALL variants (overrides the checkboxes below)'
+          type: boolean
+          required: false
+          default: false
+      variant_ksu_next:
+          description: 'Build KSU-NEXT'
+          type: boolean
+          required: false
+          default: true
+      variant_ksu_next_susfs:
+          description: 'Build KSU-NEXT-SUSFS'
+          type: boolean
+          required: false
+          default: false
+      variant_ksu_tian:
+          description: 'Build KSU-TIAN'
+          type: boolean
+          required: false
+          default: false
+      variant_non_root:
+          description: 'Build non-root'
+          type: boolean
+          required: false
+          default: false
+      ksu_next_ref:
+          description: '✏️ Custom KernelSU-Next commit/branch/tag for KSU-NEXT (Blank = default)'
+          type: string
+          required: false
+          default: ''
+      ksu_next_susfs_ref:
+          description: '✏️ Custom pershoot KernelSU-Next commit/branch/tag for KSU-NEXT-SUSFS (Blank = default)'
+          type: string
+          required: false
+          default: ''
+      ksu_tian_ref:
+          description: '✏️ Custom KernelSU (tiann) commit/branch/tag for KSU-TIAN (Blank = default)'
+          type: string
+          required: false
+          default: ''
+      susfs_ref:
+          description: 'SUSFS source (KSU-NEXT-SUSFS only): auto, custom ref, or disabled'
+          type: choice
+          required: true
+          default: 'auto'
+          options:
+            - auto
+            - custom
+            - disabled
+      susfs_custom_ref:
+          description: 'Custom SUSFS branch/tag/40-character commit (only used when susfs_ref = custom)'
+          type: string
+          required: false
+          default: ''
 
 jobs:
-  build:
+  # Turns the checkboxes into a build matrix. push / pull_request builds keep
+  # the old behaviour: a single KSU-NEXT build.
+  plan:
     runs-on: ubuntu-latest
+    permissions:
+      actions: write   # needed by the optional "clear all caches" step
+    outputs:
+      matrix: ${{ steps.set.outputs.matrix }}
+    steps:
+      - name: Clear all caches (optional)
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.clear_cache }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          ids="$(gh cache list --limit 100 --ref "${{ github.ref }}" --json id --jq '.[].id')"
+          if [ -z "$ids" ]; then echo "No caches to delete."; exit 0; fi
+          for id in $ids; do
+            gh cache delete "$id" && echo "Deleted cache $id"
+          done
+
+      - name: Select variants to build
+        id: set
+        env:
+          EVENT: ${{ github.event_name }}
+          ALL: ${{ inputs.variant_all }}
+          V_NEXT: ${{ inputs.variant_ksu_next }}
+          V_NEXT_SUSFS: ${{ inputs.variant_ksu_next_susfs }}
+          V_TIAN: ${{ inputs.variant_ksu_tian }}
+          V_NONROOT: ${{ inputs.variant_non_root }}
+        run: |
+          sel=()
+          if [ "$EVENT" != "workflow_dispatch" ]; then
+            sel=(KSU-NEXT)
+          elif [ "$ALL" = "true" ]; then
+            sel=(KSU-NEXT KSU-NEXT-SUSFS KSU-TIAN non-root)
+          else
+            if [ "$V_NEXT" = "true" ]; then sel+=(KSU-NEXT); fi
+            if [ "$V_NEXT_SUSFS" = "true" ]; then sel+=(KSU-NEXT-SUSFS); fi
+            if [ "$V_TIAN" = "true" ]; then sel+=(KSU-TIAN); fi
+            if [ "$V_NONROOT" = "true" ]; then sel+=(non-root); fi
+          fi
+
+          if [ "${#sel[@]}" -eq 0 ]; then
+            echo "::error::No variant selected. Tick at least one variant (or 'Build ALL variants')."
+            exit 1
+          fi
+
+          MATRIX="$(jq -cn --args '{variant: $ARGS.positional}' "${sel[@]}")"
+          echo "matrix=$MATRIX" >> "$GITHUB_OUTPUT"
+          echo "Variants to build: ${sel[*]}"
+          echo "### Variants to build" >> "$GITHUB_STEP_SUMMARY"
+          printf -- '- %s\n' "${sel[@]}" >> "$GITHUB_STEP_SUMMARY"
+
+  build:
+    name: Build ${{ matrix.variant }}
+    needs: plan
+    runs-on: ubuntu-latest
+    # One variant failing must not cancel the others.
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    # Required to create a GitHub Release (without it -> 403 "Resource not accessible by integration")
+    permissions:
+      contents: write
+    env:
+      # Each patch/config step appends a key here ONLY after it succeeded;
+      # the release notes are generated from this file, so they never list
+      # something that was not actually applied.
+      FEATURES_FILE: ${{ github.workspace }}/.applied_features
+      KSU_VARIANT: ${{ matrix.variant }}
+      # KSU_COMMIT is chosen per variant in the "Select custom KernelSU ref" step.
+      # Automatic push / pull_request builds always skip SUSFS.
+      # Manual workflow_dispatch builds use the selected SUSFS mode.
+      SUSFS_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.susfs_ref || 'disabled' }}
+      SUSFS_CUSTOM_REF: ${{ inputs.susfs_custom_ref }}
+      COMMON_KERNEL_FOLDER: kernel-6.6
+      BOUTEILLE_KERNEL_PATCHES_FOLDER: kernel_patches
+      KSU_FOLDER: ${{ matrix.variant == 'KSU-TIAN' && 'kernel-6.6/KernelSU' || 'kernel-6.6/KernelSU-Next' }}
+      GKI_DEFCONFIG: kernel-6.6/arch/arm64/configs/gki_defconfig
+      CCACHE_DIR: /home/runner/.cache/ccache
+      CCACHE_MAXSIZE: 2G
     steps:
       # 1. Checkout repository with submodules (shallow clone)
       - name: Checkout repository
@@ -29,8 +168,661 @@ jobs:
           sudo apt-get clean
           sudo rm -rf /usr/local
 
+      # ---- Caches ----
+      # ccache: compiler cache, refreshed every run (key ends with run_id; the
+      # newest previous cache of the same variant, then of any variant, is restored).
+      # bazel: Kleaf / Bazel downloads (toolchains, external repos), shared by all
+      # variants and only re-saved when build_kernel.sh or the submodules change.
+      - name: Install ccache
+        run: |
+          sudo apt-get install -y ccache
+          echo "/usr/lib/ccache" >> "$GITHUB_PATH"
+          mkdir -p "$CCACHE_DIR"
 
-      # 2. Run your custom bash script
+      - name: Restore ccache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ccache-${{ runner.os }}-${{ matrix.variant }}-${{ github.run_id }}
+          restore-keys: |
+            ccache-${{ runner.os }}-${{ matrix.variant }}-
+            ccache-${{ runner.os }}-
+
+      - name: Restore Bazel / toolchain cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            /home/runner/.cache/bazel
+            /home/runner/.cache/bazelisk
+          key: bazel-${{ runner.os }}-${{ hashFiles('build_kernel.sh', '.gitmodules') }}
+          restore-keys: |
+            bazel-${{ runner.os }}-
+
+      # NoMount, SUSFS and the CFI fix below all need the full kernel_patches
+      # repo on disk (not just one script), because apply_nomount_stack.sh and
+      # friends read their per-family patch files (ghost, hook, pathhide,
+      # susfs_fix_patches, ...) from BOUTEILLE_KERNEL_PATCHES_FOLDER. Cloned
+      # here, before KernelSU-Next setup, so the CFI fix step right after it
+      # can already reach it.
+      - name: Clone kernel_patches repository
+        run: |
+          git clone --depth=1 https://github.com/Bouteillepleine/kernel_patches "$BOUTEILLE_KERNEL_PATCHES_FOLDER"
+
+      - name: Select custom KernelSU ref for this variant
+        env:
+          REF_NEXT: ${{ inputs.ksu_next_ref }}
+          REF_NEXT_SUSFS: ${{ inputs.ksu_next_susfs_ref }}
+          REF_TIAN: ${{ inputs.ksu_tian_ref }}
+        run: |
+          case "$KSU_VARIANT" in
+            KSU-NEXT)        REF="$REF_NEXT" ;;
+            KSU-NEXT-SUSFS)  REF="$REF_NEXT_SUSFS" ;;
+            KSU-TIAN)        REF="$REF_TIAN" ;;
+            *)               REF="" ;;
+          esac
+          echo "KSU_COMMIT=$REF" >> "$GITHUB_ENV"
+          echo "Custom KSU ref for $KSU_VARIANT: ${REF:-<default>}"
+
+      # 2. Setup KernelSU-Next (skip if non-root)
+      - name: Setup KernelSU-Next
+        if: ${{ env.KSU_VARIANT == 'KSU-NEXT' }}
+        run: |
+          cd $COMMON_KERNEL_FOLDER
+          if [ -n "$KSU_COMMIT" ]; then
+            echo "Using custom KernelSU-Next ref: $KSU_COMMIT"
+            curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -s "$KSU_COMMIT"
+          else
+            curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -s dev
+          fi
+          cd ..
+
+      - name: Setup KernelSU-Next pershoot susfs
+        if: ${{ env.KSU_VARIANT == 'KSU-NEXT-SUSFS' }}
+        run: |
+          cd $COMMON_KERNEL_FOLDER
+          if [ -n "$KSU_COMMIT" ]; then
+            echo "Using custom KernelSU-Next ref: $KSU_COMMIT"
+            curl -LSs "https://raw.githubusercontent.com/pershoot/KernelSU-Next/dev-susfs/kernel/setup.sh" | bash -s "$KSU_COMMIT"
+          else
+            curl -LSs "https://raw.githubusercontent.com/pershoot/KernelSU-Next/dev-susfs/kernel/setup.sh" | bash -s dev-susfs
+          fi
+          cd ..
+
+      - name: Setup KernelSU-Tian
+        if: ${{ env.KSU_VARIANT == 'KSU-TIAN' }}
+        run: |
+          cd $COMMON_KERNEL_FOLDER
+          if [ -n "$KSU_COMMIT" ]; then
+            echo "Using custom KernelSU-Tian ref: $KSU_COMMIT"
+            curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -s "$KSU_COMMIT"
+          else
+            curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -s main
+          fi
+          cd ..
+
+      - name: Extract KSU Version Info and inject into Kbuild
+        if: ${{ env.KSU_VARIANT == 'KSU-NEXT' || env.KSU_VARIANT == 'KSU-NEXT-SUSFS' }}
+        shell: bash
+        run: |
+          cd $KSU_FOLDER
+
+          # Extract and export KSU version info from dev branch
+          KSU_GIT_VERSION=$(git rev-list --count refs/remotes/origin/dev 2>/dev/null)
+          KSU_GIT_TAG=$(git describe --tags --abbrev=0 refs/remotes/origin/dev 2>/dev/null || echo "")
+          KSU_COMMIT=$(git rev-parse --short refs/remotes/origin/dev 2>/dev/null)
+          KSU_VERSION=$((30000 + KSU_GIT_VERSION))
+
+          echo "::group::KSU version info"
+          echo "KSU_GIT_VERSION=$KSU_GIT_VERSION"
+          echo "KSU_GIT_TAG=$KSU_GIT_TAG"
+          echo "KSU_COMMIT=$KSU_COMMIT"
+          echo "KSU_VERSION=$KSU_VERSION"
+          echo "::endgroup::"
+
+          cd kernel
+
+          echo "::group::Kbuild BEFORE patch"
+          grep -nE 'KSU_VERSION_FALLBACK|KSU_VERSION_TAG_FALLBACK' Kbuild || echo "::warning::no FALLBACK lines found in Kbuild at all"
+          echo "::endgroup::"
+
+          sed -i "s/^KSU_VERSION_FALLBACK := 1$/KSU_VERSION_FALLBACK := ${KSU_VERSION}/" Kbuild
+          sed -i "s/^KSU_VERSION_TAG_FALLBACK := v0.0.1$/KSU_VERSION_TAG_FALLBACK := ${KSU_GIT_TAG}/" Kbuild
+
+          echo "::group::Kbuild AFTER patch"
+          grep -nE 'KSU_VERSION_FALLBACK|KSU_VERSION_TAG_FALLBACK' Kbuild
+          echo "::endgroup::"
+
+          # Make sure sed actually changed the value instead of silently being a no-op
+          if grep -q "^KSU_VERSION_FALLBACK := 1$" Kbuild; then
+            echo "::error::sed failed to replace KSU_VERSION_FALLBACK — pattern did not match (check the Kbuild line format above)"
+            exit 1
+          fi
+          if grep -q "^KSU_VERSION_TAG_FALLBACK := v0.0.1$" Kbuild; then
+            echo "::error::sed failed to replace KSU_VERSION_TAG_FALLBACK — pattern did not match (check the Kbuild line format above)"
+            exit 1
+          fi
+
+          echo "KSU_GIT_TAG=$KSU_GIT_TAG" >> $GITHUB_ENV
+          echo "KSU_VERSION=$KSU_VERSION" >> $GITHUB_ENV
+          echo "KSU_COMMIT=$KSU_COMMIT" >> $GITHUB_ENV
+
+      # KernelSU-Next 8b9d7a7a resolves the SELinux helpers through kallsyms and
+      # calls the raw address. Under legacy Clang CFI (< 6.1) that traps in
+      # cfi_check_fail during init -- a silent bootloop. No-op on a
+      # KernelSU-Next without the defect, and a no-op at runtime wherever
+      # CONFIG_CFI_CLANG is off.
+      - name: Fix KSU SELinux symbol calls under CFI
+        if: ${{ env.KSU_VARIANT == 'KSU-NEXT' }}
+        run: |
+          bash "$BOUTEILLE_KERNEL_PATCHES_FOLDER/scripts/fix_ksu_cfi_symbol_calls.sh"
+          echo "ksu_cfi_fix" >> "$FEATURES_FILE"
+
+      - name: Skip root solution (non-root build)
+        if: ${{ env.KSU_VARIANT == 'non-root' }}
+        run: echo "ksu_variant=non-root, skipping KernelSU setup."
+
+      - name: Apply NoMount (hookless) Patch
+        if: ${{ env.KSU_VARIANT == 'KSU-NEXT' || env.KSU_VARIANT == 'KSU-TIAN' || env.KSU_VARIANT == 'KSU-NEXT-SUSFS' }}
+        env:
+          # apply_nomount_stack.sh's "hookless" subcommand needs to know which
+          # ref of NoMount-Suite to pull the Prism engine source + patches from.
+          NOMOUNT_REF: main
+        run: |
+          bash "$BOUTEILLE_KERNEL_PATCHES_FOLDER/scripts/apply_nomount_stack.sh" hookless
+          echo "nomount_hookless" >> "$FEATURES_FILE"
+          # Lets later steps (e.g. the NoMount-Suite download) depend on the stack
+          # actually being applied, not just on the selected variant.
+          echo "NOMOUNT_APPLIED=true" >> "$GITHUB_ENV"
+
+      - name: Record NoMount Version
+        if: ${{ env.KSU_VARIANT == 'KSU-NEXT' || env.KSU_VARIANT == 'KSU-TIAN' || env.KSU_VARIANT == 'KSU-NEXT-SUSFS' }}
+        run: |
+          bash "$BOUTEILLE_KERNEL_PATCHES_FOLDER/scripts/apply_nomount_stack.sh" record-version
+          bash "$BOUTEILLE_KERNEL_PATCHES_FOLDER/scripts/apply_nomount_stack.sh" hook
+          echo "nomount_hook" >> "$FEATURES_FILE"
+          bash "$BOUTEILLE_KERNEL_PATCHES_FOLDER/scripts/apply_nomount_stack.sh" ghost
+          echo "nomount_ghost" >> "$FEATURES_FILE"
+          # bash "$BOUTEILLE_KERNEL_PATCHES_FOLDER/scripts/apply_nomount_stack.sh" pathhide
+
+
+      - name: Apply pathhide (manual, matches a34x tree)
+        if: ${{ env.KSU_VARIANT == 'KSU-NEXT' || env.KSU_VARIANT == 'KSU-TIAN' || env.KSU_VARIANT == 'KSU-NEXT-SUSFS' }}
+        run: |
+          cd $COMMON_KERNEL_FOLDER
+
+          echo "== 1. Copy pathhide.c & pathhide.h =="
+          cp "../$BOUTEILLE_KERNEL_PATCHES_FOLDER/common/_pathhide/pathhide.c" fs/pathhide.c
+          cp "../$BOUTEILLE_KERNEL_PATCHES_FOLDER/common/_pathhide/pathhide.h" fs/pathhide.h
+
+          echo "== 2. Apply patch utama (maps/smaps guard) =="
+          patch -p1 < "../$BOUTEILLE_KERNEL_PATCHES_FOLDER/common/_pathhide/pathhide_6.6_integration.patch"
+
+          echo "== 3. Apply patch map_files (base.c) =="
+          patch -p1 < "../$BOUTEILLE_KERNEL_PATCHES_FOLDER/common/_pathhide/pathhide_mapfiles_6.6_integration.patch"
+
+          echo "== 4. Choice & apply varian pagemap =="
+          if grep -q 'pagemap_scan_test_walk' fs/proc/task_mmu.c; then
+            PAGEMAP=pathhide_pagemap_6.12_integration.patch
+          elif awk '/^static int pagemap_pmd_range/,/^}/' fs/proc/task_mmu.c | grep -q 'bool migration'; then
+            PAGEMAP=pathhide_pagemap_5.10_integration.patch
+          else
+            PAGEMAP=pathhide_pagemap_6.6_integration.patch
+          fi
+          echo "  -> $PAGEMAP"
+          patch -p1 < "../$BOUTEILLE_KERNEL_PATCHES_FOLDER/common/_pathhide/$PAGEMAP"
+
+          echo "== 5. Choice & apply varian mincore =="
+          if grep -q 'vma_lookup(current->mm, addr)' mm/mincore.c; then
+            MINCORE=pathhide_mincore_6.12_integration.patch
+          else
+            MINCORE=pathhide_mincore_5.10_integration.patch
+          fi
+          echo "  -> $MINCORE"
+          patch -p1 < "../$BOUTEILLE_KERNEL_PATCHES_FOLDER/common/_pathhide/$MINCORE"
+
+          echo "== 6. Choice & apply varian accounting =="
+          if grep -q '\*resident = \*shared + __page_size_count(' fs/proc/task_mmu.c; then
+            ACCT=pathhide_accounting_pgsplit_integration.patch
+          elif grep -q '__page_size_count(mm->total_vm)' fs/proc/task_mmu.c; then
+            ACCT=pathhide_accounting_pgcompat_integration.patch
+          elif grep -q 'get_mm_counter_sum(mm, MM_ANONPAGES)' fs/proc/task_mmu.c; then
+            ACCT=pathhide_accounting_6.6_integration.patch
+          else
+            ACCT=pathhide_accounting_integration.patch
+          fi
+          echo "  -> $ACCT"
+          patch -p1 < "../$BOUTEILLE_KERNEL_PATCHES_FOLDER/common/_pathhide/$ACCT"
+
+          echo "== 7. Add obj-y += pathhide.o =="
+          grep -qE '^obj-y[[:space:]]*\+=.*pathhide\.o' fs/Makefile || echo 'obj-y += pathhide.o' >> fs/Makefile
+
+          cd ..
+          echo "pathhide" >> "$FEATURES_FILE"
+      # Every family is applied at fuzz 0, but `patch` still exits 0 when a hunk
+      # lands at an offset -- and an offset can put a guard inside the wrong
+      # function. That is not hypothetical: ghost_notdir.patch sat in
+      # path_parentat() instead of path_lookupat() for four kernel versions with
+      # every build green. do_verify() asserts per family that each guard is
+      # inside the function it names, so a mislanded hunk fails the build here
+      # rather than shipping a cloak with a hole in it.
+      - name: Verify NoMount stack
+        if: ${{ env.KSU_VARIANT == 'KSU-NEXT' || env.KSU_VARIANT == 'KSU-TIAN' || env.KSU_VARIANT == 'KSU-NEXT-SUSFS' }}
+        run: |
+          if [[ "$KSU_VARIANT" == "KSU-TIAN" ]]; then
+            # TIAN: verify stays non-fatal (as before); only mark when it passes
+            if bash "$BOUTEILLE_KERNEL_PATCHES_FOLDER/scripts/apply_nomount_stack.sh" verify; then
+              echo "nomount_verified" >> "$FEATURES_FILE"
+            fi
+          else
+            # KSU-NEXT and KSU-NEXT-SUSFS: a failed verify fails the build
+            bash "$BOUTEILLE_KERNEL_PATCHES_FOLDER/scripts/apply_nomount_stack.sh" verify
+            echo "nomount_verified" >> "$FEATURES_FILE"
+          fi
+
+      # SUSFS, applied on top of the NoMount stack already verified above.
+      # Cloned here so the GKI branch key (gki-android15-6.6, this device's
+      # own ASB branch) doesn't need duplicating any earlier in the job.
+      # Three parts, in order: the SUSFS sources into COMMON_KERNEL_FOLDER,
+      # the KernelSU-Next side (upstream's enable patch plus our
+      # per-rejected-file fix set, since the enable patch targets tiann's
+      # tree), then the kernel side. Every reject is either repaired by a
+      # named fix patch or fails the build -- a half-applied hiding stack
+      # boots and lies about what it hides, which is worse than a red run.
+
+      - name: Apply SUSFS KSU-TIAN
+        if: ${{ env.KSU_VARIANT == 'KSU-TIAN' && env.SUSFS_MODE != 'disabled' }}
+        run: |
+          set -euo pipefail
+          echo "::group::Apply SUSFS"
+
+          # Resolve the selected source. Push and pull_request builds never
+          # enter this step because SUSFS_MODE is forced to "disabled".
+          case "$SUSFS_MODE" in
+            auto)
+              SUSFS_REF="auto"
+              ;;
+            custom)
+              if [ -z "$SUSFS_CUSTOM_REF" ]; then
+                echo "::error::susfs_custom_ref is required when susfs_ref is custom."
+                exit 1
+              fi
+              SUSFS_REF="$SUSFS_CUSTOM_REF"
+              ;;
+            *)
+              echo "::error::Unsupported SUSFS mode: $SUSFS_MODE"
+              exit 1
+              ;;
+          esac
+
+          SUSFS_URL="https://gitlab.com/simonpunk/susfs4ksu.git"
+          SUSFS_BRANCH="gki-android15-6.6"
+          SUSFS_DIR="$GITHUB_WORKSPACE/susfs4ksu"
+          rm -rf "$SUSFS_DIR"
+          if [ "$SUSFS_REF" = "auto" ]; then
+            git clone --depth=1 --branch "$SUSFS_BRANCH" "$SUSFS_URL" "$SUSFS_DIR"
+          elif [[ "$SUSFS_REF" =~ ^[0-9a-f]{40}$ ]]; then
+            git init -q "$SUSFS_DIR"
+            git -C "$SUSFS_DIR" remote add origin "$SUSFS_URL"
+            git -C "$SUSFS_DIR" fetch --depth 1 origin "$SUSFS_REF"
+            git -C "$SUSFS_DIR" checkout -q FETCH_HEAD
+          else
+            git clone --depth=1 --branch "$SUSFS_REF" "$SUSFS_URL" "$SUSFS_DIR"
+          fi
+          if [ ! -f "$SUSFS_DIR/kernel_patches/50_add_susfs_in_${SUSFS_BRANCH}.patch" ]; then
+            echo "::error::susfs4ksu@$SUSFS_REF carries no kernel_patches/50_add_susfs_in_${SUSFS_BRANCH}.patch; pass a ref from the $SUSFS_BRANCH branch or leave susfs_ref on auto"
+            exit 1
+          fi
+          echo "susfs4ksu: $SUSFS_REF = $(git -C "$SUSFS_DIR" log --oneline -1)"
+
+          SUSFS_KP="$SUSFS_DIR/kernel_patches"
+
+          cp "$SUSFS_KP/fs/"*.c "$COMMON_KERNEL_FOLDER/fs/"
+          cp "$SUSFS_KP/include/linux/"*.h "$COMMON_KERNEL_FOLDER/include/linux/"
+
+          SUSVER="$(grep '#define SUSFS_VERSION' "$COMMON_KERNEL_FOLDER/include/linux/susfs.h" | awk -F'"' '{print $2}')"
+          if [ -z "$SUSVER" ]; then
+            echo "::error::Could not read SUSFS_VERSION from include/linux/susfs.h"
+            exit 1
+          fi
+          echo "SUSVER=$SUSVER" >> "$GITHUB_ENV"
+          echo "SusFS version: $SUSVER"
+
+          # ---- KernelSU side -------------------------------------------
+          cd "$KSU_FOLDER"
+          patch -p1 < "$SUSFS_KP/KernelSU/10_enable_susfs_for_ksu.patch" || true
+
+          # ---- Kernel side ---------------------------------------------
+          cd "$GITHUB_WORKSPACE/$COMMON_KERNEL_FOLDER"
+          patch -p1 < "$SUSFS_KP/50_add_susfs_in_gki-android15-6.6.patch" || true
+
+          # ---- Fetch Pershoot side ---------------------------------------------
+          cd $SUSFS_DIR
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "41898282+github-actions[bot]@://github.com"
+          git fetch https://gitlab.com/pershoot/susfs4ksu.git gki-android14-6.1-dev
+          git log ..FETCH_HEAD --oneline -n 2 | awk '{print $1}' | tac | xargs git cherry-pick
+          # What we set each SUSFS option to, checked against what the tree
+          # actually defines rather than trusted.
+          declare -A SUSFS_POLICY=(
+            [KSU_SUSFS]=y
+            [KSU_SUSFS_SUS_PATH]=y
+            [KSU_SUSFS_SUS_MOUNT]=y
+            [KSU_SUSFS_SUS_KSTAT]=y
+            [KSU_SUSFS_SUS_MAP]=y
+            [KSU_SUSFS_OPEN_REDIRECT]=y
+            [KSU_SUSFS_SPOOF_UNAME]=y
+            [KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG]=y
+            [KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS]=y
+            [KSU_SUSFS_ENABLE_LOG]=y
+            [KSU_SUSFS_PRIORITY_UID_FILTER]=n
+          )
+          cd "$GITHUB_WORKSPACE"
+          defined="$(grep -oE '^config KSU_SUSFS[A-Z_]*' "$KSU_FOLDER/kernel/Kconfig" | awk '{print $2}' | sort -u)"
+          listed="$(printf '%s\n' "${!SUSFS_POLICY[@]}" | sort)"
+          undecided="$(comm -13 <(echo "$listed") <(echo "$defined"))"
+          vanished="$(comm -23 <(echo "$listed") <(echo "$defined"))"
+          if [ -n "$undecided" ]; then
+            echo "::error::SUSFS $SUSVER defines options this builder has no setting for:"
+            echo "$undecided" | sed 's/^/     /'
+            exit 1
+          fi
+          if [ -n "$vanished" ]; then
+            echo "::error::This builder sets SUSFS options that $SUSVER no longer defines:"
+            echo "$vanished" | sed 's/^/     /'
+            exit 1
+          fi
+
+          echo "Add SUSFS Configuration Settings"
+          for sym in $listed; do
+            echo "CONFIG_${sym}=${SUSFS_POLICY[$sym]}"
+          done | tee -a "$COMMON_KERNEL_FOLDER/arch/arm64/configs/gki_defconfig" | sed 's/^/  /'
+
+          echo "✅ SUSFS $SUSVER applied"
+          echo "::endgroup::"
+          echo "susfs" >> "$FEATURES_FILE"
+
+      - name: Setup pershoot KSUN with susfs
+        if: ${{ env.KSU_VARIANT == 'KSU-NEXT-SUSFS' && env.SUSFS_MODE != 'disabled' }}
+        run: |
+          set -euo pipefail
+          echo "::group::Apply SUSFS"
+
+          # Resolve the selected source. Push and pull_request builds never
+          # enter this step because SUSFS_MODE is forced to "disabled".
+          case "$SUSFS_MODE" in
+            auto)
+              SUSFS_REF="auto"
+              ;;
+            custom)
+              if [ -z "$SUSFS_CUSTOM_REF" ]; then
+                echo "::error::susfs_custom_ref is required when susfs_ref is custom."
+                exit 1
+              fi
+              SUSFS_REF="$SUSFS_CUSTOM_REF"
+              ;;
+            *)
+              echo "::error::Unsupported SUSFS mode: $SUSFS_MODE"
+              exit 1
+              ;;
+          esac
+
+          SUSFS_URL="https://gitlab.com/simonpunk/susfs4ksu.git"
+          SUSFS_BRANCH="gki-android15-6.6"
+          SUSFS_DIR="$GITHUB_WORKSPACE/susfs4ksu"
+          rm -rf "$SUSFS_DIR"
+          if [ "$SUSFS_REF" = "auto" ]; then
+            git clone --depth=1 --branch "$SUSFS_BRANCH" "$SUSFS_URL" "$SUSFS_DIR"
+          elif [[ "$SUSFS_REF" =~ ^[0-9a-f]{40}$ ]]; then
+            git init -q "$SUSFS_DIR"
+            git -C "$SUSFS_DIR" remote add origin "$SUSFS_URL"
+            git -C "$SUSFS_DIR" fetch --depth 1 origin "$SUSFS_REF"
+            git -C "$SUSFS_DIR" checkout -q FETCH_HEAD
+          else
+            git clone --depth=1 --branch "$SUSFS_REF" "$SUSFS_URL" "$SUSFS_DIR"
+          fi
+          if [ ! -f "$SUSFS_DIR/kernel_patches/50_add_susfs_in_${SUSFS_BRANCH}.patch" ]; then
+            echo "::error::susfs4ksu@$SUSFS_REF carries no kernel_patches/50_add_susfs_in_${SUSFS_BRANCH}.patch; pass a ref from the $SUSFS_BRANCH branch or leave susfs_ref on auto"
+            exit 1
+          fi
+          echo "susfs4ksu: $SUSFS_REF = $(git -C "$SUSFS_DIR" log --oneline -1)"
+
+          SUSFS_KP="$SUSFS_DIR/kernel_patches"
+
+          cp "$SUSFS_KP/fs/"*.c "$COMMON_KERNEL_FOLDER/fs/"
+          cp "$SUSFS_KP/include/linux/"*.h "$COMMON_KERNEL_FOLDER/include/linux/"
+
+          SUSVER="$(grep '#define SUSFS_VERSION' "$COMMON_KERNEL_FOLDER/include/linux/susfs.h" | awk -F'"' '{print $2}')"
+          if [ -z "$SUSVER" ]; then
+            echo "::error::Could not read SUSFS_VERSION from include/linux/susfs.h"
+            exit 1
+          fi
+          echo "SUSVER=$SUSVER" >> "$GITHUB_ENV"
+          echo "SusFS version: $SUSVER"
+
+          # ---- Kernel side ---------------------------------------------
+          cd "$GITHUB_WORKSPACE/$COMMON_KERNEL_FOLDER"
+          patch -p1 --forward < "$SUSFS_KP/50_add_susfs_in_gki-android15-6.6.patch" || true
+
+          # What we set each SUSFS option to, checked against what the tree
+          # actually defines rather than trusted.
+          declare -A SUSFS_POLICY=(
+            [KSU_SUSFS]=y
+            [KSU_SUSFS_SUS_PATH]=y
+            [KSU_SUSFS_SUS_MOUNT]=y
+            [KSU_SUSFS_SUS_KSTAT]=y
+            [KSU_SUSFS_SUS_MAP]=y
+            [KSU_SUSFS_OPEN_REDIRECT]=y
+            [KSU_SUSFS_SPOOF_UNAME]=y
+            [KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG]=y
+            [KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS]=y
+            [KSU_SUSFS_ENABLE_LOG]=y
+            [KSU_SUSFS_PRIORITY_UID_FILTER]=n
+          )
+          cd "$GITHUB_WORKSPACE"
+          defined="$(grep -oE '^config KSU_SUSFS[A-Z_]*' "$KSU_FOLDER/kernel/Kconfig" | awk '{print $2}' | sort -u)"
+          listed="$(printf '%s\n' "${!SUSFS_POLICY[@]}" | sort)"
+          undecided="$(comm -13 <(echo "$listed") <(echo "$defined"))"
+          vanished="$(comm -23 <(echo "$listed") <(echo "$defined"))"
+          if [ -n "$undecided" ]; then
+            echo "::error::SUSFS $SUSVER defines options this builder has no setting for:"
+            echo "$undecided" | sed 's/^/     /'
+            exit 1
+          fi
+          if [ -n "$vanished" ]; then
+            echo "::error::This builder sets SUSFS options that $SUSVER no longer defines:"
+            echo "$vanished" | sed 's/^/     /'
+            exit 1
+          fi
+
+          echo "Add SUSFS Configuration Settings"
+          for sym in $listed; do
+            echo "CONFIG_${sym}=${SUSFS_POLICY[$sym]}"
+          done | tee -a "$COMMON_KERNEL_FOLDER/arch/arm64/configs/gki_defconfig" | sed 's/^/  /'
+
+          echo "✅ SUSFS $SUSVER applied"
+          echo "::endgroup::"
+          echo "susfs" >> "$FEATURES_FILE"
+
+      - name: Keep app seccomp filters when KSU grants root
+        if: ${{ env.KSU_VARIANT == 'KSU-NEXT' }}
+        run: |
+          set -euo pipefail
+          echo "::group::Keep app seccomp filters"
+          python3 "$BOUTEILLE_KERNEL_PATCHES_FOLDER/scripts/fix_ksu_app_profile_seccomp.py" "$KSU_FOLDER"
+          echo "::endgroup::"
+          echo "ksu_seccomp" >> "$FEATURES_FILE"
+
+      - name: Apply BORE scheduler patch
+        run: |
+          cd $COMMON_KERNEL_FOLDER
+          curl -LSs -o bore_6.6.patch "https://raw.githubusercontent.com/Bouteillepleine/kernel_patches/main/experimental/bore_6.6.patch"
+          patch -p1 < bore_6.6.patch
+          cd ..
+          echo "bore" >> "$FEATURES_FILE"
+
+      - name: Apply ADIOS I/O scheduler patch
+        run: |
+          cd $COMMON_KERNEL_FOLDER
+          curl -LSs -o adios_ioscheduler_6.6.patch "https://raw.githubusercontent.com/Bouteillepleine/kernel_patches/main/experimental/adios_ioscheduler_6.6.patch"
+          patch -p1 < adios_ioscheduler_6.6.patch
+          sed -i '/config MQ_IOSCHED_DEFAULT_ADIOS/,/help/ s/default n/default y/' block/Kconfig.iosched
+          grep -A8 'config MQ_IOSCHED_DEFAULT_ADIOS' block/Kconfig.iosched | grep -q 'default y' \
+            || echo "::warning::ADIOS default-y sed did not change block/Kconfig.iosched (symbol or format differs)"
+          cd ..
+          echo "adios" >> "$FEATURES_FILE"
+
+      - name: Apply ADIOS I/O scheduler defconfig
+        run: |
+          "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_MQ_IOSHED_ADIOS
+          "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --set-val CONFIG_MQ_IOSHED_DEFAULT_ADIOS y
+          echo "adios_default" >> "$FEATURES_FILE"
+
+      - name: Apply Unicode Fix
+        shell: bash
+        run: |
+          cd "$COMMON_KERNEL_FOLDER"
+          patch -p1 < "../$BOUTEILLE_KERNEL_PATCHES_FOLDER/common/unicode_bypass_fix_6.1+.patch"
+          cd ..
+          echo "unicode_fix" >> "$FEATURES_FILE"
+
+      - name: apply patch droid space
+        shell: bash
+        run: |
+          cd "$COMMON_KERNEL_FOLDER"
+          # ABI: use ABI padding for SYSVIPC This commit allows us to enable CONFIG_SYSVIPC in defconfig without breaking kernel ABI
+          patch -p1 < "../$BOUTEILLE_KERNEL_PATCHES_FOLDER/common/droidspaces/fix_sysvipc_kabi_6_7_8.patch"
+          patch -p1 < "../$BOUTEILLE_KERNEL_PATCHES_FOLDER/common/droidspaces/0001-Return-ghost-task-if-task-is-null-and-is-requested-b.patch"
+          cd ..
+          echo "droidspaces_patch" >> "$FEATURES_FILE"
+
+      - name: add configs
+        shell: bash
+        run: |
+          "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_SYSVIPC
+          "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_POSIX_MQUEUE
+          "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_IPC_NS
+          "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_PID_NS
+          "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_USER_NS
+          "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_DEVTMPFS
+          "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_NETFILTER_XT_MATCH_ADDRTYPE
+          "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_NETFILTER_XT_TARGET_REJECT
+          "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_NETFILTER_XT_TARGET_LOG
+          "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_NETFILTER_XT_MATCH_RECENT
+          "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_IP_SET
+          "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_IP_SET_HASH_IP
+          "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_IP_SET_HASH_NET
+          "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_NETFILTER_XT_SET
+          echo "droidspaces_cfg" >> "$FEATURES_FILE"
+
+      - name: apply bbrv3 patch
+        shell: bash
+        run: |
+          cd "$COMMON_KERNEL_FOLDER"
+          patch -p1 < "../$BOUTEILLE_KERNEL_PATCHES_FOLDER/common/bbrv3/0001-net-tcp-backport-BBRv3-to-android15-6.6.patch"
+          cd ..
+          echo "bbrv3" >> "$FEATURES_FILE"
+
+      - name: add bbr configs to defconfig
+        shell: bash
+        run: |
+          "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_NET_SCH_FQ
+          "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_NET_SCH_FQ_CODEL
+          "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_NET_SCH_CAKE
+          "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_NET_SCH_PIE
+          "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_NET_SCH_FQ_PIE
+          "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_TCP_CONG_ADVANCED
+          "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_TCP_CONG_BBR
+          "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_TCP_CONG_BBR3
+          "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_TCP_CONG_CUBIC
+          "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --disable CONFIG_TCP_CONG_BIC
+          "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --disable CONFIG_TCP_CONG_WESTWOOD
+          "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --disable CONFIG_TCP_CONG_HTCP
+          echo "bbr_cfg" >> "$FEATURES_FILE"
+
+      - name: apply ttl support
+        shell: bash
+        run: |
+          "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_IP_NF_TARGET_TTL
+          "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_IP6_NF_TARGET_HL
+          "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_IP6_NF_MATCH_HL
+          echo "ttl" >> "$FEATURES_FILE"
+
+      - name: add ip-set and ipv6_NAT support in defconfig and apply patch
+        shell: bash
+        run: |
+
+          "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_IP_SET
+          "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --set-val CONFIG_IP_SET_MAX 65534
+          "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_IP_SET_BITMAP_IP
+          "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_IP_SET_BITMAP_IPMAC
+          "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_IP_SET_BITMAP_PORT
+          "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_IP_SET_HASH_IP
+          "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_IP_SET_HASH_IPMARK
+          "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_IP_SET_HASH_IPPORT
+          "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_IP_SET_HASH_IPPORTIP
+          "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_IP_SET_HASH_IPPORTNET
+          "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_IP_SET_HASH_IPMAC
+          "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_IP_SET_HASH_MAC
+          "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_IP_SET_HASH_NETPORTNET
+          "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_IP_SET_HASH_NET
+          "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_IP_SET_HASH_NETNET
+          "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_IP_SET_HASH_NETPORT
+          "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_IP_SET_HASH_NETIFACE
+          "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_IP_SET_LIST_SET
+          "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_NETFILTER_XT_MATCH_ADDRTYPE
+          "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_NETFILTER_XT_SET
+          "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_IP6_NF_NAT
+          "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_IP6_NF_TARGET_MASQUERADE
+
+          cd "$COMMON_KERNEL_FOLDER"
+          patch -p1 < "../$BOUTEILLE_KERNEL_PATCHES_FOLDER/common/IPv6_NAT_FIX.patch"
+          cd ..
+          echo "ipset_ipv6nat" >> "$FEATURES_FILE"
+
+      - name: switch to lz4 (usable) and Tmpfs Support
+        shell: bash
+        run: |
+          "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --disable CONFIG_ZRAM_DEF_COMP_LZORLE
+          "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --set-val CONFIG_ZRAM_DEF_COMP lz4
+          "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --disable CONFIG_ZRAM_DEF_COMP_LZORLE
+          "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_ZRAM_DEF_COMP_LZ4
+          "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_TMPFS_XATTR
+          "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --enable CONFIG_TMPFS_POSIX_ACL
+          echo "lz4_tmpfs" >> "$FEATURES_FILE"
+
+      - name: apply add timeout wakelocks globally
+        shell: bash
+        run: |
+          cd "$COMMON_KERNEL_FOLDER"
+          patch -p1 < "../$BOUTEILLE_KERNEL_PATCHES_FOLDER/common/add_timeout_wakelocks_globally.patch"
+          cd ..
+          echo "wakelocks" >> "$FEATURES_FILE"
+
+      - name: apply adjust cpu scan order
+        shell: bash
+        run: |
+          cd "$COMMON_KERNEL_FOLDER"
+          patch -p1 < "../$BOUTEILLE_KERNEL_PATCHES_FOLDER/common/adjust_cpu_scan_order.patch"
+          cd ..
+          echo "cpu_scan_order" >> "$FEATURES_FILE"
+
+      - name: apply file struct 8bytes align
+        shell: bash
+        run: |
+          cd "$COMMON_KERNEL_FOLDER"
+          patch -p1 < "../$BOUTEILLE_KERNEL_PATCHES_FOLDER/common/file_struct_8bytes_align.patch"
+          cd ..
+          echo "file_struct_align" >> "$FEATURES_FILE"
+
+      - name: apply improve int_sqrt
+        shell: bash
+        run: |
+          cd "$COMMON_KERNEL_FOLDER"
+          patch -p1 < "../$BOUTEILLE_KERNEL_PATCHES_FOLDER/common/int_sqrt.patch"
+          cd ..
+          echo "int_sqrt" >> "$FEATURES_FILE"
+
+      # 4. Run your custom bash script
       - name: Run build script
         run: |
           chmod +x ./build_kernel.sh
@@ -48,39 +840,41 @@ jobs:
 
       - name: Extract the .config file from a kernel image
         run: |
-          bash kernel-6.6/scripts/extract-ikconfig Image >> kernel_config
+          bash $COMMON_KERNEL_FOLDER/scripts/extract-ikconfig Image >> kernel_config
 
           export OSRC_RELEASE="$(cat build_kernel.sh | grep SEC_BUILDNUMBER | tail | sed 's/^export SEC_BUILDNUMBER\=\"//' | sed 's/\"$//' | sed 's/ogki//')"
           echo "Based on $OSRC_RELEASE Samsung Open Source Kernel source" >> versions.txt
           echo "osrc_release=$OSRC_RELEASE" >> $GITHUB_ENV
 
-          export VERSION="$(cat kernel-6.6/Makefile | grep 'VERSION = ' | head -n 1 | sed 's/VERSION = //')"
-          export PATCHLEVEL="$(cat kernel-6.6/Makefile | grep 'PATCHLEVEL = ' | head -n 1 | sed 's/PATCHLEVEL = //')"
-          export SUBLEVEL="$(cat kernel-6.6/Makefile | grep 'SUBLEVEL = ' | head -n 1 | sed 's/SUBLEVEL = //')"
+          export VERSION="$(cat $COMMON_KERNEL_FOLDER/Makefile | grep 'VERSION = ' | head -n 1 | sed 's/VERSION = //')"
+          export PATCHLEVEL="$(cat $COMMON_KERNEL_FOLDER/Makefile | grep 'PATCHLEVEL = ' | head -n 1 | sed 's/PATCHLEVEL = //')"
+          export SUBLEVEL="$(cat $COMMON_KERNEL_FOLDER/Makefile | grep 'SUBLEVEL = ' | head -n 1 | sed 's/SUBLEVEL = //')"
           export KERNEL_VERSION="$VERSION.$PATCHLEVEL.$SUBLEVEL"
           echo "Linux Kernel ARM64 $KERNEL_VERSION" >> versions.txt
           echo "kernel_release=$KERNEL_VERSION" >> $GITHUB_ENV
 
-          export ASB_LEVEL="$(cat kernel-6.6/build.config.common | grep ASB_SPL | tail | sed 's/^ASB_SPL\=//')"
+          export ASB_LEVEL="$(cat $COMMON_KERNEL_FOLDER/build.config.common | grep ASB_SPL | tail | sed 's/^ASB_SPL\=//')"
           echo "Merged $ASB_LEVEL android15-6.6 ASB Security Patch Level" >> versions.txt
           echo "asb_level=$ASB_LEVEL" >> $GITHUB_ENV
 
           echo "osrc_release=$OSRC_RELEASE" >> build_info.txt
           echo "asb_level=$ASB_LEVEL" >> build_info.txt
           echo "kernel_release=$KERNEL_VERSION" >> build_info.txt
-          echo "$(grep 'BRANCH=' kernel-6.6/build.config.common)" >> build_info.txt
-          echo "$(grep 'KMI_GENERATION=' kernel-6.6/build.config.common)" >> build_info.txt
+          echo "root_solution=$KSU_VARIANT" >> build_info.txt
+          echo "susfs_version=${SUSVER:-none}" >> build_info.txt
+          echo "$(grep 'BRANCH=' $COMMON_KERNEL_FOLDER/build.config.common)" >> build_info.txt
+          echo "$(grep 'KMI_GENERATION=' $COMMON_KERNEL_FOLDER/build.config.common)" >> build_info.txt
 
       - name: Build boot image
         run: |
-          export ASB_LEVEL_SHORT="$(echo "${{ env.asb_level }}" | cut -f 1 -d'-')-$(echo $ASB_LEVEL | cut -f 2 -d'-')"
+          export ASB_LEVEL_SHORT="$(echo "${{ env.asb_level }}" | cut -f 1,2 -d'-')"
           cat Image | gzip -n -f -9 > Image.gzip
           python3 tools/mkbootimg -o boot.img --header_version 4 --os_version 15.0.0 --os_patch_level "$ASB_LEVEL_SHORT" --kernel Image.gzip --ramdisk tools/ramdisk --cmdline ''
           python3 tools/avbtool append_vbmeta_image --image boot.img --vbmeta_image tools/boot_vbmeta --partition_size 33554432
 
       - name: Build boot image tar
         run: |
-          export FILE_NAME="a34x_${{ env.kernel_release }}_${{ env.asb_level }}_${{ env.osrc_release }}"
+          export FILE_NAME="a34x_${{ env.kernel_release }}_${{ env.asb_level }}_${{ env.osrc_release }}_${{ matrix.variant }}"
           lz4 -B6 --content-size -q boot.img boot.img.lz4
           tar cvf "$FILE_NAME.tar" boot.img.lz4
           export CHECKSUM="$(md5sum "$FILE_NAME.tar" | cut -d " " -f 1 | sed 's/ //')"
@@ -89,40 +883,247 @@ jobs:
           mv "$FILE_NAME.tar" "$FILE_NAME.tar.md5"
           echo "tar_file_name=$FILE_NAME" >> $GITHUB_ENV
 
+      # AnyKernel3 only needs the raw Image: clone the template, take the Image from
+      # the kernel build output, drop it in the template root and zip it.
+      - name: Download AnyKernel3
+        run: |
+          for i in 1 2 3; do
+            rm -rf AnyKernel3
+            if git clone --depth=1 https://github.com/xnnnsets/AnyKernel3 AnyKernel3; then
+              ok=1; break
+            fi
+            echo "Clone attempt $i failed, retrying..."; sleep 5
+          done
+          [ "${ok:-0}" = "1" ] || { echo "::error::Could not clone xnnnsets/AnyKernel3"; exit 1; }
+          echo "AnyKernel3 commit: $(git -C AnyKernel3 rev-parse --short HEAD)"
+
+      - name: Package AnyKernel3 zip
+        run: |
+          # Locate the Image produced by the kernel build (dist/ is where the
+          # out/ directory was moved to by an earlier step).
+          # If several files are named Image, prefer the one whose checksum
+          # matches the Image recorded by the "Copy kernel image" step.
+          WANT="$(cut -d' ' -f1 Image.sha256sum | head -n 1)"
+          IMG=""
+          while IFS= read -r f; do
+            [ -z "$IMG" ] && IMG="$f"
+            if [ "$(sha256sum "$f" | cut -d' ' -f1)" = "$WANT" ]; then IMG="$f"; break; fi
+          done < <(find dist out -type f -name Image 2>/dev/null)
+          if [ -z "$IMG" ]; then
+            echo "::error::No Image file found in the kernel build output"
+            exit 1
+          fi
+          echo "Using $IMG"
+          sha256sum "$IMG"
+
+          cp "$IMG" AnyKernel3/Image
+
+          export ZIP_NAME="AnyKernel3_a34x_${{ env.kernel_release }}_${{ env.asb_level }}_${{ env.osrc_release }}_${{ matrix.variant }}.zip"
+          cd AnyKernel3
+          rm -rf .git .github
+          zip -r9 "../$ZIP_NAME" . -x "README.md" "*placeholder"
+          cd ..
+
+          unzip -l "$ZIP_NAME"
+          echo "anykernel_zip_name=$ZIP_NAME" >> "$GITHUB_ENV"
+
+      # NoMount-Suite: only when the NoMount stack was applied in this build, fetch the LATEST
+      # release, only the 00_NoMount-Module-*.zip module (not the LKM variant)
+      # and include it as an Actions artifact and a GitHub Release asset.
+      - name: Download latest NoMount-Suite release
+        if: ${{ env.NOMOUNT_APPLIED == 'true' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p nomount-suite
+          ok=0
+          for i in 1 2 3; do
+            if gh release download --repo Bouteillepleine/NoMount-Suite --pattern '00_NoMount-Module-*.zip' --dir nomount-suite --clobber \
+               && [ -n "$(ls -A nomount-suite)" ]; then
+              ok=1; break
+            fi
+            echo "Download attempt $i failed, retrying..."; sleep 5
+          done
+          if [ "$ok" != "1" ]; then
+            echo "::warning::Failed to download the latest NoMount-Suite release; continuing the build without the Suite file."
+            exit 0
+          fi
+          NMS_TAG="$(gh release view --repo Bouteillepleine/NoMount-Suite --json tagName -q .tagName)"
+          echo "NMS_TAG=$NMS_TAG" >> "$GITHUB_ENV"
+          echo "NoMount-Suite $NMS_TAG:"
+          ls -la nomount-suite
+
       - name: Upload dist artifact
         uses: actions/upload-artifact@v7
         with:
-          name: dist-dir
+          name: dist-dir-${{ matrix.variant }}
           path: dist
 
       - name: Upload Image artifact
         uses: actions/upload-artifact@v7
         with:
-          name: kernel-image
+          name: kernel-image-${{ matrix.variant }}
           path: Image
 
       - name: Upload TAR artifact
         uses: actions/upload-artifact@v7
         with:
-          name: flashable-tar
+          name: flashable-tar-${{ matrix.variant }}
           path: "${{ env.tar_file_name }}.tar.md5"
-          
+
       - name: Upload Image artifact
         uses: actions/upload-artifact@v7
         with:
-          name: boot-image
+          name: boot-image-${{ matrix.variant }}
           path: boot.img
-      
+
+      - name: Upload AnyKernel3 zip artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: anykernel3-zip-${{ matrix.variant }}
+          path: "${{ env.anykernel_zip_name }}"
+
+      - name: Upload kernel_config artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: kernel_config.txt-${{ matrix.variant }}
+          path: kernel_config
+
+
+      - name: Upload NoMount-Suite artifact
+        if: ${{ env.NMS_TAG != '' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: nomount-suite-${{ env.NMS_TAG }}-${{ matrix.variant }}
+          path: nomount-suite
+          if-no-files-found: ignore
+
+      - name: Generate release notes
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.release }}
+        shell: bash
+        run: |
+          OUT=release_notes.md
+          touch "$FEATURES_FILE"
+
+          # has KEY       -> true only if that step really succeeded in this run
+          # line KEY TEXT -> prints a bullet only if KEY was applied
+          has()  { grep -qx "$1" "$FEATURES_FILE"; }
+          line() { if has "$1"; then shift; echo "- $*"; fi; }
+          # section TITLE BODY -> printed only when BODY is non-empty
+          section() { if [ -n "$2" ]; then printf '\n### %s\n%s\n' "$1" "$2" >> "$OUT"; fi; }
+
+          # ---- Root solution ----
+          case "$KSU_VARIANT" in
+            KSU-NEXT)        ROOT_LINE="KernelSU-Next (branch dev) - tag ${KSU_GIT_TAG:-n/a}, version ${KSU_VERSION:-n/a}, commit ${KSU_COMMIT:-n/a}" ;;
+            KSU-NEXT-SUSFS)  ROOT_LINE="KernelSU-Next by pershoot (branch dev-susfs) - tag ${KSU_GIT_TAG:-n/a}, version ${KSU_VERSION:-n/a}, commit ${KSU_COMMIT:-n/a}" ;;
+            KSU-TIAN)        ROOT_LINE="KernelSU (tiann, main)${KSU_COMMIT:+ - ref $KSU_COMMIT}" ;;
+            *)               ROOT_LINE="None (non-root build)" ;;
+          esac
+
+          if has susfs; then
+            SUSFS_LINE="SUSFS ${SUSVER:-n/a} (gki-android15-6.6)"
+          else
+            SUSFS_LINE="Not included"
+          fi
+
+          cat > "$OUT" <<EOF
+          ## 📱 Samsung Galaxy A34 5G (a34x / SM-A346B) - GKI 6.6 Kernel
+
+          | | |
+          |---|---|
+          | **Linux kernel** | ${kernel_release} (android15-6.6) |
+          | **ASB security patch level** | ${asb_level} |
+          | **Samsung OSS base** | ${osrc_release} |
+          | **Root** | ${ROOT_LINE} |
+          | **SUSFS** | ${SUSFS_LINE} |
+          | **Build date** | $(date -u +'%Y-%m-%d %H:%M UTC') |
+          EOF
+
+          section "🛡️ Hiding / NoMount stack" "$(
+            line nomount_hookless "NoMount ${NMVER:-n/a} (hookless) - Prism engine ${NM_ENGINE_REF:-main}@${NM_ENGINE_SHA:0:7}"
+            line nomount_hook     "NoMount hook patches"
+            line nomount_ghost    "NoMount ghost patches"
+            line nomount_verified "Stack verified at build time (every guard checked inside its target function)"
+            line pathhide         "Pathhide for 6.6: maps/smaps, map_files, pagemap, mincore and memory accounting"
+          )"
+
+          section "🔧 KernelSU-Next fixes" "$(
+            line ksu_cfi_fix  "Fix SELinux symbol calls under Clang CFI (prevents init bootloop)"
+            line ksu_seccomp  "Keep app seccomp filters when KSU grants root (app profile)"
+          )"
+
+          ADIOS_TXT="ADIOS I/O scheduler"
+          has adios_default && ADIOS_TXT="ADIOS I/O scheduler (set as default)"
+          section "⚡ Performance & scheduling" "$(
+            line bore              "BORE CPU scheduler"
+            line adios             "$ADIOS_TXT"
+            line cpu_scan_order    "Adjusted CPU scan order"
+            line wakelocks         "Timeout wakelocks applied globally (better idle battery)"
+            line int_sqrt          "Faster int_sqrt"
+            line file_struct_align "8-byte aligned file struct"
+          )"
+
+          section "🌐 Networking" "$(
+            line bbrv3         "BBRv3 backported to android15-6.6"
+            line bbr_cfg       "Congestion control: BBR, BBR3, CUBIC (BIC/Westwood/HTCP disabled); qdiscs FQ, FQ_CODEL, CAKE, PIE, FQ_PIE"
+            line ttl           "TTL / HL target and match support (IPv4 + IPv6)"
+            line ipset_ipv6nat "Full IP set support (bitmap, hash, list) + IPv6 NAT/MASQUERADE (with IPv6_NAT_FIX patch)"
+            line droidspaces_cfg "Netfilter: xt_set, ADDRTYPE, REJECT, LOG, RECENT"
+          )"
+
+          section "📦 Containers (Droidspaces ready)" "$(
+            line droidspaces_cfg   "SYSVIPC, POSIX_MQUEUE, IPC / PID / USER namespaces, DEVTMPFS"
+            line droidspaces_patch "SYSVIPC kABI-safe via ABI padding"
+            line droidspaces_patch "Ghost-task fix for requests on a null task"
+          )"
+
+          section "🧩 Misc" "$(
+            line lz4_tmpfs  "ZRAM default compression switched to LZ4; TMPFS_XATTR + TMPFS_POSIX_ACL enabled"
+            line unicode_fix "Unicode bypass fix (6.1+)"
+          )"
+
+          if [ -n "${NMS_TAG:-}" ] && [ -d nomount-suite ] && [ -n "$(ls -A nomount-suite)" ]; then
+            {
+              printf '\n### 🧰 NoMount Suite %s (bundled)\n' "$NMS_TAG"
+              printf 'Latest release of [NoMount-Suite](https://github.com/Bouteillepleine/NoMount-Suite/releases/tag/%s) is attached to this release:\n' "$NMS_TAG"
+              ls -1 nomount-suite | sed 's/^/- /'
+              printf '\nThe Suite and the engine update separately: the engine is already built into this kernel, while the Suite zip is installed through your root manager.\n'
+            } >> "$OUT"
+          fi
+
+          SHA256="$(cut -d' ' -f1 Image.sha256sum | head -n1)"
+          cat >> "$OUT" <<EOF
+
+          ### 📥 Files
+          | File | Description |
+          |---|---|
+          | ${tar_file_name}.tar.md5 | Flash via Odin (AP slot) |
+          | ${anykernel_zip_name} | AnyKernel3 flashable zip (kernel Image only) |
+          | boot.img | Raw boot image (AVB footer appended) |
+          | Image / Image.sha256sum | Uncompressed kernel image + checksum |
+          | dist.tar.gz | Full Kleaf dist output |
+          | kernel_config | Extracted .config from the built image |
+          | build_info.txt | Build metadata |
+
+          Image SHA-256: ${SHA256}
+
+          ### ⚠️ Notes
+          - Needs an unlocked bootloader. Back up your current boot partition first.
+          - Best flashed on the matching firmware base (${osrc_release}).
+          - Flash at your own risk - the author is not responsible for bricked devices or lost data.
+          EOF
+
+          cat "$OUT"
 
       - name: Upload release assets
-        if: github.event.inputs.release
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.release }}
         uses: softprops/action-gh-release@v3
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          body_path: versions.txt
-          tag_name: "${{ env.kernel_release }}_${{ env.asb_level }}_${{ env.osrc_release }}"
-          name: "${{ env.kernel_release }} - ${{ env.asb_level }} - ${{ env.osrc_release }}"
+          body_path: release_notes.md
+          tag_name: "${{ env.kernel_release }}_${{ env.asb_level }}_${{ env.osrc_release }}_${{ matrix.variant }}"
+          name: "${{ env.kernel_release }} - ${{ env.asb_level }} - ${{ env.osrc_release }} - ${{ matrix.variant }}"
           files: |
             Image
             Image.sha256sum
@@ -131,4 +1132,55 @@ jobs:
             build_info.txt
             boot.img
             ${{ env.tar_file_name }}.tar.md5
+            ${{ env.anykernel_zip_name }}
+            nomount-suite/*
 
+  # Keeps the repo's cache storage from piling up (GitHub limit: 10 GB, oldest
+  # entries get evicted anyway). Runs after every build job finished and saved
+  # its caches: keeps only the NEWEST ccache entry per variant and the NEWEST
+  # Bazel/toolchain entry, deletes the rest.
+  cleanup:
+    name: Prune old caches
+    needs: [plan, build]
+    if: ${{ always() && needs.plan.result == 'success' }}
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GH_REPO: ${{ github.repository }}
+      REF: ${{ github.ref }}
+    steps:
+      - name: Delete stale caches
+        shell: bash
+        run: |
+          python3 - <<'EOF'
+          import json, os, subprocess
+
+          out = subprocess.run(
+              ["gh", "cache", "list", "--limit", "100", "--ref", os.environ["REF"],
+               "--json", "id,key,createdAt,sizeInBytes"],
+              capture_output=True, text=True, check=True).stdout
+          caches = json.loads(out or "[]")
+
+          groups = {}
+          for c in caches:
+              key = c["key"]
+              if key.startswith("ccache-"):
+                  group = key.rsplit("-", 1)[0]      # ccache-Linux-<variant> (strip run_id)
+              elif key.startswith("bazel-"):
+                  group = "bazel"                    # keep one toolchain cache in total
+              else:
+                  continue                           # not ours, leave it alone
+              groups.setdefault(group, []).append(c)
+
+          freed = 0
+          for group, items in sorted(groups.items()):
+              items.sort(key=lambda c: c["createdAt"], reverse=True)
+              keep, stale = items[0], items[1:]
+              print(f"{group}: keeping {keep['key']}, deleting {len(stale)} old")
+              for c in stale:
+                  subprocess.run(["gh", "cache", "delete", str(c["id"])], check=True)
+                  freed += c.get("sizeInBytes", 0)
+          print(f"Freed about {freed / 1024 / 1024:.0f} MiB")
+          EOF
