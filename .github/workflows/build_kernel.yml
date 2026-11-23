@@ -655,7 +655,7 @@ jobs:
       - name: Apply BORE scheduler patch
         run: |
           cd $COMMON_KERNEL_FOLDER
-          curl -LSs -o bore_6.6.patch "https://raw.githubusercontent.com/Bouteillepleine/kernel_patches/main/experimental/bore_6.6.patch"
+          curl -LSs -o bore_6.6.patch "https://raw.githubusercontent.com/xnnnsets/patch/refs/heads/main/6.6/bore_6.6_a34x.patch"
           patch -p1 < bore_6.6.patch
           cd ..
           echo "bore" >> "$FEATURES_FILE"
