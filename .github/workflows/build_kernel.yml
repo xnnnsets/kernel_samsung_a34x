@@ -40,6 +40,15 @@ on:
           type: boolean
           required: false
           default: false
+      pathhide_mode:
+          description: 'Pathhide method (NoMount variants): pick ONE'
+          type: choice
+          required: true
+          default: 'manual'
+          options:
+            - manual
+            - automatic
+            - disabled
       ksu_next_ref:
           description: '✏️ Custom KernelSU-Next commit/branch/tag for KSU-NEXT (Blank = default)'
           type: string
@@ -142,6 +151,7 @@ jobs:
       # something that was not actually applied.
       FEATURES_FILE: ${{ github.workspace }}/.applied_features
       KSU_VARIANT: ${{ matrix.variant }}
+      PATHHIDE_MODE: ${{ inputs.pathhide_mode || 'manual' }}
       # KSU_COMMIT is chosen per variant in the "Select custom KernelSU ref" step.
       # Automatic push / pull_request builds always skip SUSFS.
       # Manual workflow_dispatch builds use the selected SUSFS mode.
@@ -344,9 +354,14 @@ jobs:
           echo "nomount_ghost" >> "$FEATURES_FILE"
           # bash "$BOUTEILLE_KERNEL_PATCHES_FOLDER/scripts/apply_nomount_stack.sh" pathhide
 
+      - name: Apply pathhide (automatic)
+        if: ${{ env.PATHHIDE_MODE == 'automatic' && (env.KSU_VARIANT == 'KSU-NEXT' || env.KSU_VARIANT == 'KSU-TIAN' || env.KSU_VARIANT == 'KSU-NEXT-SUSFS') }}
+        run: |
+          bash "$BOUTEILLE_KERNEL_PATCHES_FOLDER/scripts/apply_nomount_stack.sh" pathhide
+          echo "pathhide_auto" >> "$FEATURES_FILE"
 
       - name: Apply pathhide (manual, matches a34x tree)
-        if: ${{ env.KSU_VARIANT == 'KSU-NEXT' || env.KSU_VARIANT == 'KSU-TIAN' || env.KSU_VARIANT == 'KSU-NEXT-SUSFS' }}
+        if: ${{ env.PATHHIDE_MODE == 'manual' && (env.KSU_VARIANT == 'KSU-NEXT' || env.KSU_VARIANT == 'KSU-TIAN' || env.KSU_VARIANT == 'KSU-NEXT-SUSFS') }}
         run: |
           cd $COMMON_KERNEL_FOLDER
 
@@ -397,7 +412,7 @@ jobs:
           grep -qE '^obj-y[[:space:]]*\+=.*pathhide\.o' fs/Makefile || echo 'obj-y += pathhide.o' >> fs/Makefile
 
           cd ..
-          echo "pathhide" >> "$FEATURES_FILE"
+          echo "pathhide_manual" >> "$FEATURES_FILE"
       # Every family is applied at fuzz 0, but `patch` still exits 0 when a hunk
       # lands at an offset -- and an offset can put a guard inside the wrong
       # function. That is not hypothetical: ghost_notdir.patch sat in
@@ -652,6 +667,17 @@ jobs:
           echo "::endgroup::"
           echo "ksu_seccomp" >> "$FEATURES_FILE"
 
+      - name: Apply le9uo patch
+        run: |
+          cd $COMMON_KERNEL_FOLDER
+          curl -LSs -o 0001-le9uo-rebased.patch "https://raw.githubusercontent.com/xnnnsets/patch/refs/heads/main/6.6/0001-le9uo-rebased.patch"
+          patch -p1 < 0001-le9uo-rebased.patch
+          cd ..
+          "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --set-val CONFIG_ANON_MIN_RATIO 15
+          "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --set-val CONFIG_CLEAN_LOW_RATIO 0
+          "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --set-val CONFIG_CLEAN_MIN_RATIO 15
+          echo "le9uo" >> "$FEATURES_FILE"
+
       - name: Apply BORE scheduler patch
         run: |
           cd $COMMON_KERNEL_FOLDER
@@ -660,7 +686,7 @@ jobs:
           cd ..
           echo "bore" >> "$FEATURES_FILE"
 
-      - name: Apply ADIOS I/O scheduler patch
+      - name: Apply ADIOS I/O scheduler (ned force move I/O to adios) patch
         run: |
           cd $COMMON_KERNEL_FOLDER
           curl -LSs -o adios_ioscheduler_6.6.patch "https://raw.githubusercontent.com/Bouteillepleine/kernel_patches/main/experimental/adios_ioscheduler_6.6.patch"
@@ -779,7 +805,7 @@ jobs:
           cd ..
           echo "ipset_ipv6nat" >> "$FEATURES_FILE"
 
-      - name: switch to lz4 (usable) and Tmpfs Support
+      - name: switch to lz4 (need force move with module) and Tmpfs Support
         shell: bash
         run: |
           "$COMMON_KERNEL_FOLDER/scripts/config" --file "$GKI_DEFCONFIG" --disable CONFIG_ZRAM_DEF_COMP_LZORLE
@@ -1044,7 +1070,8 @@ jobs:
             line nomount_hook     "NoMount hook patches"
             line nomount_ghost    "NoMount ghost patches"
             line nomount_verified "Stack verified at build time (every guard checked inside its target function)"
-            line pathhide         "Pathhide for 6.6: maps/smaps, map_files, pagemap, mincore and memory accounting"
+            line pathhide_auto    "Pathhide (applied by the NoMount stack script)"
+            line pathhide_manual  "Pathhide for 6.6: maps/smaps, map_files, pagemap, mincore and memory accounting"
           )"
 
           section "🔧 KernelSU-Next fixes" "$(
@@ -1057,6 +1084,7 @@ jobs:
           section "⚡ Performance & scheduling" "$(
             line bore              "BORE CPU scheduler"
             line adios             "$ADIOS_TXT"
+            line le9uo             "le9uo patch (keeps the file-backed working set in memory under pressure)"
             line cpu_scan_order    "Adjusted CPU scan order"
             line wakelocks         "Timeout wakelocks applied globally (better idle battery)"
             line int_sqrt          "Faster int_sqrt"
